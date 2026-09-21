@@ -1,0 +1,41 @@
+{
+  "app": {
+    "host": "127.0.0.1",
+    "port": 8765,
+    "timezone": "Asia/Shanghai"
+  },
+  "storage": {
+    "method": "filesystem",
+    "database_path": "data/gpt_activity.db",
+    "raw_conversations_dir": "data/raw/conversations",
+    "import_roots": []
+  },
+  "chatgpt": {
+    "base_url": "https://chatgpt.com",
+    "browser_profile": "browser_profile",
+    "browser_channel": "chrome",
+    "include_files": false,
+    "request_timeout_seconds": 45,
+    "min_delay_seconds": 10,
+    "max_delay_seconds": 16,
+    "stop_on_first_unchanged": true
+  },
+  "accounts": [
+    {
+      "id": "default",
+      "name": "默认账号",
+      "browser_profile": "browser_profile",
+      "enabled": true
+    }
+  ],
+  "topics": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "api_key": "",
+    "classifier_schema_version": "topic-schema-v1",
+    "max_context_chars": 2400,
+    "max_concurrency": 4,
+    "request_timeout_seconds": 90
+  }
+}

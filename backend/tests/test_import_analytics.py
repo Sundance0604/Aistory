@@ -1,0 +1,77 @@
+import json
+from pathlib import Path
+from zipfile import ZipFile
+
+from gpt_activity.analytics import daily_series, summary
+from gpt_activity.config import load_settings
+from gpt_activity.db import connect
+from gpt_activity.importer import import_json
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "branching_conversation.json"
+
+
+def settings_for(tmp_path, timezone="UTC"):
+    config = tmp_path / "config.local.json"
+    config.write_text(
+        json.dumps(
+            {
+                "app": {"timezone": timezone},
+                "storage": {
+                    "database_path": "data/test.db",
+                    "raw_conversations_dir": "data/raw"
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return load_settings(config)
+
+
+def test_import_is_idempotent(tmp_path):
+    settings = settings_for(tmp_path)
+    first = import_json(settings, FIXTURE)
+    second = import_json(settings, FIXTURE)
+    assert first.imported == 1
+    assert second.unchanged == 1
+    with connect(settings.database_path) as conn:
+        assert conn.execute("SELECT COUNT(*) n FROM conversations").fetchone()["n"] == 1
+        assert conn.execute("SELECT COUNT(*) n FROM messages").fetchone()["n"] == 8
+
+
+def test_metrics_count_only_active_visible_turns(tmp_path):
+    settings = settings_for(tmp_path)
+    import_json(settings, FIXTURE)
+    result = summary(settings.database_path)
+    assert result["conversations"] == 1
+    assert result["prompts"] == 2
+    assert result["prompt_visible_tokens"] > 0
+    assert result["response_visible_tokens"] > 0
+
+
+def test_timezone_moves_activity_across_day_boundary(tmp_path):
+    settings = settings_for(tmp_path, "Asia/Shanghai")
+    import_json(settings, FIXTURE)
+    days = daily_series(settings.database_path, settings.timezone)
+    assert any(item["date"] == "2024-01-01" and item["prompts"] == 2 for item in days)
+
+
+def test_official_export_zip_and_same_remote_id_are_namespaced_by_account(tmp_path):
+    settings = settings_for(tmp_path)
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    export_zip = tmp_path / "chatgpt-export.zip"
+    with ZipFile(export_zip, "w") as archive:
+        archive.writestr("conversations.json", json.dumps([payload]))
+
+    import_json(settings, FIXTURE, account_id="default", account_name="Personal")
+    result = import_json(settings, export_zip, account_id="work", account_name="Work")
+    assert result.imported == 1
+    with connect(settings.database_path) as conn:
+        rows = conn.execute(
+            "SELECT id,account_id,remote_id,raw_json_path FROM conversations ORDER BY account_id"
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0]["remote_id"] == rows[1]["remote_id"]
+        assert rows[0]["id"] != rows[1]["id"]
+        assert {row["account_id"] for row in rows} == {"default", "work"}
+        assert conn.execute("SELECT COUNT(*) n FROM data_sources").fetchone()["n"] == 2

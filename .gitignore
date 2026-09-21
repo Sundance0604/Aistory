@@ -1,0 +1,30 @@
+# your exported data — never commit this
+export/
+complete_export/
+debug_export/
+chats*.csv
+manifest.csv
+categories.json
+
+# browser session (contains your ChatGPT login!)
+browser_profile/
+browser_profiles/
+
+# logs
+*.log
+
+# GPT Activity local state and secrets
+config.local.json
+data/*.db
+data/*.db-*
+data/raw/
+frontend/node_modules/
+frontend/dist/
+.pytest_cache/
+.deps/
+.venv/
+.tiktoken-cache/
+.test-tmp/
+
+__pycache__/
+*.pyc

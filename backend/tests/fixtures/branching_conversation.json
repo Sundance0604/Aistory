@@ -1,0 +1,59 @@
+{
+  "conversation_id": "conv-1",
+  "title": "Branch fixture",
+  "create_time": 1704067200,
+  "update_time": 1704070980,
+  "default_model_slug": "gpt-4o",
+  "current_node": "a2",
+  "mapping": {
+    "root": {"id": "root", "parent": null, "children": ["system"]},
+    "system": {
+      "id": "system",
+      "parent": "root",
+      "children": ["u1"],
+      "message": {"id": "system-msg", "author": {"role": "system"}, "create_time": 1704067200, "content": {"content_type": "text", "parts": ["hidden system"]}, "metadata": {}}
+    },
+    "u1": {
+      "id": "u1",
+      "parent": "system",
+      "children": ["a-old", "a-current"],
+      "message": {"id": "u1-msg", "author": {"role": "user"}, "create_time": 1704067260, "content": {"content_type": "text", "parts": ["Explain groups"]}, "metadata": {}}
+    },
+    "a-old": {
+      "id": "a-old",
+      "parent": "u1",
+      "children": [],
+      "message": {"id": "a-old-msg", "author": {"role": "assistant"}, "create_time": 1704067320, "content": {"content_type": "text", "parts": ["Abandoned answer"]}, "metadata": {}}
+    },
+    "a-current": {
+      "id": "a-current",
+      "parent": "u1",
+      "children": ["u2"],
+      "message": {"id": "a-current-msg", "author": {"role": "assistant"}, "create_time": 1704067380, "content": {"content_type": "text", "parts": ["A group is a set with an operation."]}, "metadata": {"model_slug": "gpt-4o"}}
+    },
+    "u2": {
+      "id": "u2",
+      "parent": "a-current",
+      "children": ["tool"],
+      "message": {"id": "u2-msg", "author": {"role": "user"}, "create_time": 1704070800, "content": {"content_type": "multimodal_text", "parts": [{"content_type": "image_asset_pointer", "asset_pointer": "file-service://image-1"}]}, "metadata": {"attachments": [{"id": "file-1", "name": "image.png"}]}}
+    },
+    "tool": {
+      "id": "tool",
+      "parent": "u2",
+      "children": ["a2"],
+      "message": {"id": "tool-msg", "author": {"role": "tool"}, "create_time": 1704070860, "content": {"content_type": "text", "parts": ["private tool output"]}, "metadata": {}}
+    },
+    "a2": {
+      "id": "a2",
+      "parent": "tool",
+      "children": [],
+      "message": {"id": "a2-msg", "author": {"role": "assistant"}, "create_time": 1704070980, "content": {"content_type": "text", "parts": ["The image shows a Cayley table."]}, "metadata": {}}
+    },
+    "reasoning": {
+      "id": "reasoning",
+      "parent": "u1",
+      "children": [],
+      "message": {"id": "reasoning-msg", "author": {"role": "assistant"}, "create_time": 1704067300, "content": {"content_type": "thoughts", "thoughts": [{"content": "hidden reasoning"}]}, "metadata": {}}
+    }
+  }
+}
