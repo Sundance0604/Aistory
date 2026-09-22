@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, Clock3, LayoutDashboard, LoaderCircle, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
+import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, CheckCircle2, Clock3, LayoutDashboard, LoaderCircle, RefreshCw, Settings as SettingsIcon, Tags, X } from 'lucide-react'
 import { api } from './api'
 import { ActivityPage } from './pages/ActivityPage'
 import { ConversationDrawer } from './components/ConversationDrawer'
@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [provider, setProvider] = useState('')
   const [job, setJob] = useState<any>({ status: 'idle' })
+  const [jobNoticeDismissed, setJobNoticeDismissed] = useState(false)
   useEffect(() => {
     const query = `provider=${provider}`
     Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&${query}`)])
@@ -41,13 +42,18 @@ export default function App() {
     const timer = setInterval(refreshJob, 1200)
     return () => clearInterval(timer)
   }, [])
+  useEffect(() => { if (job.kind === 'topics' && job.status === 'running') setJobNoticeDismissed(false) }, [job.kind, job.status])
+  const cancelTopics = async () => {
+    const response = await api<any>('/api/jobs/cancel', { method: 'POST', body: '{}' })
+    setJob((current:any) => ({ ...current, ...response }))
+  }
   const openConversation = (id: string) => setConversationId(id)
   const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} provider={provider} onConversation={openConversation} />
     : page === 'activity' ? <ActivityPage initial={days} provider={provider} onConversation={openConversation} />
     : page === 'usage' ? <UsageTime />
     : page === 'lifecycle' ? <Lifecycle provider={provider} onConversation={openConversation} />
     : page === 'history' ? <History provider={provider} onConversation={openConversation} />
-    : page === 'topics' ? <Topics provider={provider} />
+    : page === 'topics' ? <Topics provider={provider} job={job} onJobChange={setJob} onCancel={cancelTopics} />
     : page === 'conversations' ? <Conversations provider={provider} onConversation={openConversation} />
     : page === 'sync' ? <SyncPage /> : <Settings />
   return (
@@ -59,7 +65,7 @@ export default function App() {
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>
       </aside>
       <main>{error ? <div className="error-banner"><b>无法读取本地 API</b><span>{error}</span></div> : content}</main>
-      {job.kind === 'topics' && job.status === 'running' && <div className="global-job-progress" role="status" aria-live="polite"><header><LoaderCircle className="spinning" size={17}/><b>正在分析主题</b><span>{job.progress?.total == null ? '准备中' : `${job.progress.processed || 0} / ${job.progress.total}`}</span></header><div><i style={{width:`${job.progress?.percent || 0}%`}} /></div><small>已分类 {job.progress?.classified || 0}{job.progress?.failed ? ` · 失败 ${job.progress.failed}` : ''} · 可继续浏览其他页面</small></div>}
+      {job.kind === 'topics' && !jobNoticeDismissed && ['running','cancelling','cancelled'].includes(job.status) && <div className={`global-job-progress ${job.status}`} role="status" aria-live="polite"><header>{job.status==='cancelled'?<CheckCircle2 size={17}/>:<LoaderCircle className="spinning" size={17}/>}<b>{job.status==='running'?'正在分析主题':job.status==='cancelling'?'正在停止…':'分析已中止'}</b><span>{job.progress?.total == null ? '准备中' : `${job.progress.processed || 0} / ${job.progress.total}`}</span>{job.status==='cancelled'&&<button className="job-close" aria-label="关闭" onClick={()=>setJobNoticeDismissed(true)}><X size={14}/></button>}</header><div><i style={{width:`${job.progress?.percent || 0}%`}} /></div><small>{job.status==='cancelled'?`已完成 ${job.result?.classified || 0} / ${job.result?.queued || job.progress?.total || 0} · 剩余 ${job.result?.remaining || 0} 条`:`已分类 ${job.progress?.classified || 0}${job.progress?.failed ? ` · 失败 ${job.progress.failed}` : ''} · 可继续浏览其他页面`}</small>{job.status==='running'&&<button className="job-cancel" onClick={cancelTopics}>中止分析</button>}{job.status==='cancelling'&&<button className="job-cancel" disabled>正在停止…</button>}</div>}
       <ConversationDrawer conversationId={conversationId} onClose={() => setConversationId(undefined)} />
     </div>
   )

@@ -145,7 +145,7 @@ cp config.example.json config.local.json
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-chat",
     "api_key": "",
-    "max_concurrency": 4,
+    "max_concurrency": 10,
     "preferences": {
       "keywords": ["机器学习", "写作"],
       "aliases": {},
@@ -178,7 +178,7 @@ python -m gpt_activity serve
 
 ### Windows 一键启动
 
-安装完成后可以直接双击项目根目录的 `start_aistory.cmd`。启动器会自动寻找当前 Windows 用户目录下 Conda 的 `pavane` 环境，并从 `config.local.json` 读取主机与端口；服务就绪后自动打开网页。如果服务已经运行，它只会打开页面，不会重复创建服务进程。
+安装完成后可以直接双击项目根目录的 `start_aistory.cmd`。启动器会自动寻找当前 Windows 用户目录下 Conda 的 `pavane` 环境，并从 `config.local.json` 读取主机与端口；服务就绪后自动打开网页。CMD 窗口会持续显示项目路径、Python 环境、访问地址、运行状态和服务器日志，请保持窗口打开；按 `Ctrl+C` 或关闭窗口即可停止服务。如果服务已经运行，启动器会显示现有服务与后台任务状态，不会重复创建进程。
 
 启动文件只需保留在项目目录中。如果 Conda 环境不在常见目录，可将环境变量 `AISTORY_PYTHON` 设置为对应的 `python.exe` 完整路径。
 
@@ -282,6 +282,8 @@ python -m gpt_activity topics reclassify
 
 发送给主题模型的内容仅包括对话标题、当前用户提示和最多两个先前用户提示，不会发送完整对话或附件。API 密钥不会写入 SQLite、日志或设置接口响应。网页启动主题分析后，右下角会持续显示总数、已处理、成功、失败和百分比；切换到其他页面不会丢失进度。
 
+主题分析采用有界并发，`max_concurrency` 默认及最大值均为 10。分析过程中可在主题页或全局进度卡片点击“中止分析”：已经发出的请求会自然完成并保存有效结果，但不会再提交新提示；状态会先变为“正在停止…”，待所有在途请求结束后显示“分析已中止”。重新分析也按单个提示在事务内替换旧主题，因此中止不会清空尚未处理提示的旧分类。之后再次点击“分析新提示”即可从未完成部分继续。
+
 “对话”页面的标题/正文搜索、账号、平台、主题和日期条件可以组合使用。未选择主题时不会提交空的整数参数；后端也兼容旧前端发出的 `topic_id=` 请求。
 
 ## 指标定义
@@ -316,6 +318,8 @@ GMM 与 HMM 是两种并列的模型设定，不显示唯一“真值”。HMM �
 - `GET /api/conversations`：对话列表与筛选
 - `POST /api/sync`：启动同步
 - `GET /api/sync/status`：同步状态
+- `GET /api/jobs/status`：当前后台任务及进度
+- `POST /api/jobs/cancel`：协作式中止正在运行的主题分析
 - `GET/POST /api/accounts`：账号配置
 - `POST /api/import`：导入本地导出数据
 - `GET /api/storage`：当前保存方式和路径

@@ -35,7 +35,7 @@ def test_topic_classification_reports_global_progress(tmp_path, monkeypatch):
         def __init__(self, _settings):
             pass
 
-        def classify(self, _request):
+        def classify(self, _request, should_cancel=None):
             return TopicClassificationResult.model_validate({
                 "topics": [{"parent_topic": "Math", "topic": "Algebra", "weight": 1}],
                 "confidence": 1,

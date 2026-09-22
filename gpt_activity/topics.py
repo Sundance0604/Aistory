@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
@@ -67,7 +67,15 @@ class TopicClassifier(Protocol):
     classifier_name: str
     classifier_version: str
 
-    def classify(self, request: TopicClassificationRequest) -> TopicClassificationResult: ...
+    def classify(
+        self,
+        request: TopicClassificationRequest,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> TopicClassificationResult: ...
+
+
+class TopicCancellationRequested(Exception):
+    """Raised only at a safe cancellation point before another model retry."""
 
 
 class DeepSeekTopicClassifier:
@@ -93,7 +101,11 @@ class DeepSeekTopicClassifier:
     def close(self) -> None:
         self.client.close()
 
-    def classify(self, request: TopicClassificationRequest) -> TopicClassificationResult:
+    def classify(
+        self,
+        request: TopicClassificationRequest,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> TopicClassificationResult:
         import httpx
 
         system = (
@@ -122,6 +134,8 @@ class DeepSeekTopicClassifier:
         }
         last_error: Exception | None = None
         for attempt in range(2):
+            if attempt and should_cancel and should_cancel():
+                raise TopicCancellationRequested()
             if attempt:
                 body["messages"].append(
                     {"role": "user", "content": "Repair the previous output. Return valid JSON matching the requested schema."}
@@ -179,7 +193,8 @@ def classify_prompts(
     reclassify: bool = False,
     limit: int | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
-) -> dict[str, int]:
+    should_cancel: Callable[[], bool] | None = None,
+) -> dict[str, int | bool]:
     migrate(settings.database_path)
     classifier = DeepSeekTopicClassifier(settings)
     max_chars = int(settings.values["topics"]["max_context_chars"])
@@ -199,6 +214,11 @@ def classify_prompts(
         prompts = [dict(row) for row in conn.execute(query, params).fetchall()]
 
     completed = failed = 0
+
+    def cancelled() -> bool:
+        return bool(should_cancel and should_cancel())
+
+    was_cancelled = cancelled()
     if progress_callback:
         progress_callback({
             "phase": "classifying",
@@ -210,6 +230,8 @@ def classify_prompts(
         })
 
     def process(prompt: dict[str, Any]) -> tuple[str, str, str | None]:
+        if cancelled():
+            return prompt["title"], "cancelled", None
         with connect(settings.database_path) as conn:
             previous = conn.execute(
                 """
@@ -227,7 +249,7 @@ def classify_prompts(
         )
         now = datetime.now(timezone.utc).isoformat()
         try:
-            result = classifier.classify(request)
+            result = classifier.classify(request, should_cancel=cancelled)
             with connect(settings.database_path) as conn:
                 conn.execute("DELETE FROM message_topics WHERE message_id=?", (prompt["id"],))
                 for item in result.topics:
@@ -249,6 +271,8 @@ def classify_prompts(
                     (prompt["id"], classifier.classifier_version),
                 )
             return prompt["title"], "classified", None
+        except TopicCancellationRequested:
+            return prompt["title"], "cancelled", None
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"[:500]
             with connect(settings.database_path) as conn:
@@ -263,29 +287,65 @@ def classify_prompts(
             return prompt["title"], "failed", type(exc).__name__
 
     try:
-        workers = max(1, min(int(settings.values["topics"].get("max_concurrency", 4)), 8))
+        # Keep the queue bounded: at most ten model requests may be in flight,
+        # and cancellation prevents any replacement work from being submitted.
+        workers = max(1, min(int(settings.values["topics"].get("max_concurrency", 10)), 10))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="topic") as pool:
-            futures = [pool.submit(process, prompt) for prompt in prompts]
-            for index, future in enumerate(as_completed(futures), 1):
-                title, status, error_name = future.result()
-                if status == "classified":
-                    completed += 1
-                    print(f"[TOPICS {index}/{len(prompts)}] {title}: classified", flush=True)
-                else:
-                    failed += 1
-                    print(f"[TOPICS {index}/{len(prompts)}] failed ({error_name})", flush=True)
+            prompt_iterator = iter(prompts)
+            pending = set()
+
+            def submit_next() -> bool:
+                if cancelled():
+                    return False
+                try:
+                    prompt = next(prompt_iterator)
+                except StopIteration:
+                    return False
+                pending.add(pool.submit(process, prompt))
+                return True
+
+            for _ in range(workers):
+                if not submit_next():
+                    break
+
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                pending.difference_update(done)
+                for future in done:
+                    title, status, error_name = future.result()
+                    if status == "classified":
+                        completed += 1
+                        print(f"[TOPICS {completed + failed}/{len(prompts)}] {title}: classified", flush=True)
+                    elif status == "failed":
+                        failed += 1
+                        print(f"[TOPICS {completed + failed}/{len(prompts)}] failed ({error_name})", flush=True)
+                processed = completed + failed
                 if progress_callback:
                     progress_callback({
-                        "phase": "classifying",
+                        "phase": "cancelling" if cancelled() else "classifying",
                         "total": len(prompts),
-                        "processed": index,
+                        "processed": processed,
                         "classified": completed,
                         "failed": failed,
-                        "percent": round(index / max(len(prompts), 1) * 100, 1),
+                        "remaining": max(0, len(prompts) - processed),
+                        "percent": round(processed / max(len(prompts), 1) * 100, 1),
                     })
+                if cancelled():
+                    was_cancelled = True
+                else:
+                    for _ in done:
+                        submit_next()
     finally:
         classifier.close()
-    return {"queued": len(prompts), "classified": completed, "failed": failed}
+    processed = completed + failed
+    return {
+        "queued": len(prompts),
+        "processed": processed,
+        "classified": completed,
+        "failed": failed,
+        "remaining": max(0, len(prompts) - processed),
+        "cancelled": was_cancelled,
+    }
 
 
 def _turn_tokens(conn, message: dict[str, Any]) -> int:

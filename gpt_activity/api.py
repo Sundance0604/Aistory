@@ -42,12 +42,20 @@ from .usage_time import (
 
 
 JOB_LOCK = threading.Lock()
-JOB: dict[str, Any] = {"kind": None, "status": "idle", "result": None, "error": None, "progress": None}
+JOB_CANCEL_EVENT = threading.Event()
+JOB: dict[str, Any] = {
+    "kind": None,
+    "status": "idle",
+    "result": None,
+    "error": None,
+    "progress": None,
+    "cancel_requested": False,
+}
 
 
 def _update_job_progress(progress: dict[str, Any]) -> None:
     with JOB_LOCK:
-        if JOB["status"] == "running":
+        if JOB["status"] in {"running", "cancelling"}:
             JOB["progress"] = deepcopy(progress)
 
 
@@ -65,21 +73,31 @@ def _topic_id_value(value: str | int | None) -> int:
 
 def _start_job(kind: str, operation: Callable[[], Any]) -> dict[str, Any]:
     with JOB_LOCK:
-        if JOB["status"] == "running":
+        if JOB["status"] in {"running", "cancelling"}:
             raise HTTPException(status_code=409, detail=f"{JOB['kind']} is already running")
-        JOB.update(kind=kind, status="running", result=None, error=None, progress={"phase": "starting"})
+        JOB_CANCEL_EVENT.clear()
+        JOB.update(
+            kind=kind,
+            status="running",
+            result=None,
+            error=None,
+            progress={"phase": "starting"},
+            cancel_requested=False,
+        )
+        started_job = deepcopy(JOB)
 
     def runner():
         try:
             result = operation()
             with JOB_LOCK:
-                JOB.update(status="complete", result=result)
+                status = "cancelled" if kind == "topics" and result.get("cancelled") else "complete"
+                JOB.update(status=status, result=result)
         except Exception as exc:
             with JOB_LOCK:
                 JOB.update(status="failed", error=f"{type(exc).__name__}: {exc}")
 
     threading.Thread(target=runner, daemon=True, name=f"gpt-activity-{kind}").start()
-    return deepcopy(JOB)
+    return started_job
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -236,6 +254,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with JOB_LOCK:
             return deepcopy(JOB)
 
+    @app.post("/api/jobs/cancel")
+    def cancel_job():
+        with JOB_LOCK:
+            if JOB["status"] not in {"running", "cancelling"}:
+                return {"status": "idle"}
+            if JOB["kind"] != "topics":
+                return {"status": "not_cancellable", "kind": JOB["kind"]}
+            JOB_CANCEL_EVENT.set()
+            JOB.update(status="cancelling", cancel_requested=True)
+            return {"status": "cancelling", "kind": "topics", "cancel_requested": True}
+
     @app.post("/api/import")
     def start_import(body: dict[str, Any]):
         source = Path(str(body.get("path") or "")).expanduser()
@@ -340,7 +369,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit = (body or {}).get("limit")
         return _start_job(
             "topics",
-            lambda: classify_prompts(settings, limit=limit, progress_callback=_update_job_progress),
+            lambda: classify_prompts(
+                settings,
+                limit=limit,
+                progress_callback=_update_job_progress,
+                should_cancel=JOB_CANCEL_EVENT.is_set,
+            ),
         )
 
     @app.post("/api/topics/reclassify")
@@ -349,7 +383,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _start_job(
             "topics",
             lambda: classify_prompts(
-                settings, reclassify=True, limit=limit, progress_callback=_update_job_progress
+                settings,
+                reclassify=True,
+                limit=limit,
+                progress_callback=_update_job_progress,
+                should_cancel=JOB_CANCEL_EVENT.is_set,
             ),
         )
 

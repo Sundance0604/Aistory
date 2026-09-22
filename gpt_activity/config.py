@@ -67,7 +67,7 @@ DEFAULTS: dict[str, Any] = {
         "api_key": "",
         "classifier_schema_version": "topic-schema-v1",
         "max_context_chars": 2400,
-        "max_concurrency": 4,
+        "max_concurrency": 10,
         "request_timeout_seconds": 90,
         "preferences": {
             "keywords": [],

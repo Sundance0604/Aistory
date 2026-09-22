@@ -38,21 +38,77 @@ function Test-AistoryReady {
     }
 }
 
-if (-not (Test-AistoryReady)) {
-    Start-Process -FilePath $pythonExe -ArgumentList @("-m", "gpt_activity", "serve") -WorkingDirectory $projectRoot
-    $ready = $false
-    for ($attempt = 0; $attempt -lt 30; $attempt++) {
-        Start-Sleep -Seconds 1
-        if (Test-AistoryReady) {
-            $ready = $true
-            break
+function Show-CurrentJob {
+    try {
+        $job = Invoke-RestMethod -TimeoutSec 1 "$url/api/jobs/status"
+        if ($job.status -eq "running") {
+            $processed = if ($null -ne $job.progress.processed) { $job.progress.processed } else { 0 }
+            $total = if ($null -ne $job.progress.total) { $job.progress.total } else { "?" }
+            Write-Host "[Aistory] Background job: $($job.kind), $processed / $total"
+        }
+        else {
+            Write-Host "[Aistory] Background job: $($job.status)"
         }
     }
-    if (-not $ready) {
-        throw "Aistory did not become ready within 30 seconds."
+    catch {
+        Write-Host "[Aistory] Background job status is unavailable."
     }
 }
 
+Write-Host "[Aistory] Project: $projectRoot"
+Write-Host "[Aistory] Python:  $pythonExe"
+Write-Host "[Aistory] URL:     $url"
+
+if (Test-AistoryReady) {
+    Write-Host "[Aistory] Status:  already running" -ForegroundColor Green
+    Show-CurrentJob
+    if (-not $NoOpen) {
+        Start-Process $url
+        Write-Host ""
+        Write-Host "The existing service is still running. Press Enter to close this status window."
+        Read-Host | Out-Null
+    }
+    exit 0
+}
+
+Write-Host "[Aistory] Status:  starting..." -ForegroundColor Yellow
+$serverProcess = Start-Process -FilePath $pythonExe -ArgumentList @("-m", "gpt_activity", "serve") -WorkingDirectory $projectRoot -NoNewWindow -PassThru
+$ready = $false
+for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    Start-Sleep -Seconds 1
+    if (Test-AistoryReady) {
+        $ready = $true
+        break
+    }
+    if ($serverProcess.HasExited) {
+        break
+    }
+}
+
+if (-not $ready) {
+    if (-not $serverProcess.HasExited) {
+        Stop-Process -Id $serverProcess.Id -Force
+    }
+    throw "Aistory did not become ready within 30 seconds. Review the server messages above."
+}
+
+Write-Host "[Aistory] Status:  running (PID $($serverProcess.Id))" -ForegroundColor Green
+Write-Host "[Aistory] Leave this window open to keep the server running."
+Write-Host "[Aistory] Press Ctrl+C or close this window to stop it."
+Show-CurrentJob
+
 if (-not $NoOpen) {
     Start-Process $url
+}
+
+try {
+    Wait-Process -Id $serverProcess.Id
+    $serverProcess.Refresh()
+    exit $serverProcess.ExitCode
+}
+finally {
+    if (-not $serverProcess.HasExited) {
+        Write-Host "[Aistory] Stopping the local server..." -ForegroundColor Yellow
+        Stop-Process -Id $serverProcess.Id
+    }
 }
