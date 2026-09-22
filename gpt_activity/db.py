@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -213,19 +213,28 @@ CREATE INDEX IF NOT EXISTS idx_usage_candidates_run ON usage_time_model_candidat
 CREATE TABLE IF NOT EXISTS interaction_gaps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id INTEGER NOT NULL REFERENCES usage_time_model_runs(id) ON DELETE CASCADE,
+    gap_index INTEGER,
     from_message_id TEXT NOT NULL,
     to_message_id TEXT NOT NULL,
     from_timestamp TEXT NOT NULL,
     to_timestamp TEXT NOT NULL,
     gap_seconds REAL NOT NULL,
+    log_gap REAL,
     prev_input_tokens INTEGER NOT NULL,
     prev_output_tokens INTEGER NOT NULL,
     next_input_tokens INTEGER NOT NULL,
     same_conversation INTEGER NOT NULL,
     same_account INTEGER NOT NULL,
     same_platform INTEGER NOT NULL,
+    gmm_component INTEGER,
+    gmm_probabilities_json TEXT,
     gmm_break_probability REAL,
-    hmm_break_probability REAL
+    gmm_boundary INTEGER,
+    hmm_state INTEGER,
+    hmm_short_gap_probability REAL,
+    hmm_long_gap_probability REAL,
+    hmm_break_probability REAL,
+    hmm_boundary INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_interaction_gaps_run ON interaction_gaps(run_id, id);
 
@@ -238,7 +247,12 @@ CREATE TABLE IF NOT EXISTS usage_sessions (
     end_at TEXT NOT NULL,
     event_count INTEGER NOT NULL,
     session_span_seconds REAL NOT NULL,
+    tail_allowance_seconds INTEGER NOT NULL DEFAULT 0,
     estimated_usage_seconds REAL NOT NULL,
+    max_internal_gap_seconds REAL NOT NULL DEFAULT 0,
+    median_internal_gap_seconds REAL NOT NULL DEFAULT 0,
+    total_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0,
     UNIQUE(run_id, model_family, session_index)
 );
 CREATE INDEX IF NOT EXISTS idx_usage_sessions_run ON usage_sessions(run_id, model_family);
@@ -301,6 +315,32 @@ def migrate(path: str | Path) -> None:
         sync_columns = {row["name"] for row in conn.execute("PRAGMA table_info(sync_runs)")}
         if "account_id" not in sync_columns:
             conn.execute("ALTER TABLE sync_runs ADD COLUMN account_id TEXT")
+        gap_columns = {row["name"] for row in conn.execute("PRAGMA table_info(interaction_gaps)")}
+        gap_additions = {
+            "gap_index": "INTEGER",
+            "log_gap": "REAL",
+            "gmm_component": "INTEGER",
+            "gmm_probabilities_json": "TEXT",
+            "gmm_boundary": "INTEGER",
+            "hmm_state": "INTEGER",
+            "hmm_short_gap_probability": "REAL",
+            "hmm_long_gap_probability": "REAL",
+            "hmm_boundary": "INTEGER",
+        }
+        for column, declaration in gap_additions.items():
+            if column not in gap_columns:
+                conn.execute(f"ALTER TABLE interaction_gaps ADD COLUMN {column} {declaration}")
+        session_columns = {row["name"] for row in conn.execute("PRAGMA table_info(usage_sessions)")}
+        session_additions = {
+            "tail_allowance_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "max_internal_gap_seconds": "REAL NOT NULL DEFAULT 0",
+            "median_internal_gap_seconds": "REAL NOT NULL DEFAULT 0",
+            "total_input_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "total_output_tokens": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, declaration in session_additions.items():
+            if column not in session_columns:
+                conn.execute(f"ALTER TABLE usage_sessions ADD COLUMN {column} {declaration}")
         conn.execute("DROP INDEX IF EXISTS idx_conversations_account_remote")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_provider_account_remote "

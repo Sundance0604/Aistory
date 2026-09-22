@@ -56,6 +56,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "usage_time": {
         "tail_allowance_minutes": 5,
+        "boundary_threshold": 0.5,
         "min_model_samples": 50,
         "random_state": 42,
     },

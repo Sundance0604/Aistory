@@ -16,7 +16,7 @@
 - 统计提示数、对话数、活跃天数以及输入、输出、总可见 Token。
 - 日、周、月完整可滚动趋势、可点击的年度热力图和按日对话下钻。
 - 物化日统计、对话生命周期分析，以及 ChatGPT / Gemini / 全部平台合并筛选。
-- 全局使用时长推断：交互 gap 分布、Token 关联、GMM AIC/BIC、特征消融、HMM、模型分歧和 session 时间线。
+- 全局使用时长推断：交互 gap 分布、Token 描述性关联、gap-only GMM/HMM、显式边界、异常诊断和模型分歧。
 - 对话搜索、日期和账号筛选、消息与对话排行榜。
 - 使用 DeepSeek 等 OpenAI 兼容接口进行可选的层级主题分类。
 - 个性化主题词、稳定主题颜色和对话卡片主题摘要。
@@ -287,9 +287,9 @@ python -m gpt_activity topics reclassify
 
 ### 全局使用时长
 
-“时长”页面把所有平台、账号和对话中的用户事件合并成同一条时间线，不把 conversation 或平台切换视为 session 边界。页面从原始 gap 分布开始，依次展示 Spearman 关联、K=1–4 的 GMM 候选及 AIC/BIC、Token 特征消融、二状态 Gaussian HMM、两种模型的边界分歧、session 时间线和最终估算。
+“时长”页面把所有平台、账号和对话中的用户事件合并成同一条时间线，不把 conversation 或平台切换视为 Session 边界。核心 GMM 与 HMM 都只使用 `log1p(gap_seconds)`；Token 只保留作相关性和回归等描述性分析。页面展示 K=1–6 的 gap-only GMM 候选、Short-gap / Long-gap 间隔状态、后验边界概率、显式边界时间线、模型混淆矩阵，以及 Session 时长和边界异常诊断。
 
-GMM 与 HMM 的结果会同时保留，不显示唯一“真值”。Session 尾部余量默认 5 分钟，可在设置或 `config.local.json` 的 `usage_time.tail_allowance_minutes` 修改。模型在同步、导入或相关设置变化后重建并写入 SQLite，打开页面时只读取已保存结果。
+GMM 与 HMM 是两种并列的模型设定，不显示唯一“真值”。HMM 状态表示相邻交互的间隔尺度，而不是用户的活跃/离开状态。边界概率阈值默认 0.5，Session 尾部余量默认 5 分钟，可在设置或 `config.local.json` 的 `usage_time.boundary_threshold`、`usage_time.tail_allowance_minutes` 修改。最终结果标为“推断的 Session 使用时长”，模型范围表示设定敏感性，不是统计置信区间。模型会在同步、导入或相关设置变化后重建并写入 SQLite。
 
 ## 本地接口
 
@@ -303,6 +303,7 @@ GMM 与 HMM 的结果会同时保留，不显示唯一“真值”。Session 尾
 - `GET /api/usage-time/distribution`：原始 interaction gap 分布
 - `GET /api/usage-time/associations`：Token-gap 关联与描述性回归
 - `GET /api/usage-time/model-candidates`：GMM/HMM 候选、AIC 与 BIC
+- `GET /api/usage-time/boundaries`：最近的 gap、边界概率与两模型决策
 - `GET /api/usage-time/{gmm|hmm|disagreements|sessions}`：模型解释、分歧和 sessions
 - `GET /api/conversations`：对话列表与筛选
 - `POST /api/sync`：启动同步

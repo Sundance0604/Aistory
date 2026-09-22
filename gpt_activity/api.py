@@ -31,6 +31,7 @@ from .usage_time import (
     ensure_usage_time,
     refresh_usage_time,
     usage_associations,
+    usage_boundaries,
     usage_candidates,
     usage_disagreements,
     usage_distribution,
@@ -157,6 +158,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/usage-time/disagreements")
     def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500)):
         return usage_disagreements(settings.database_path, limit)
+
+    @app.get("/api/usage-time/boundaries")
+    def get_usage_time_boundaries(limit: int = Query(240, ge=1, le=1000)):
+        return usage_boundaries(settings.database_path, limit)
 
     @app.get("/api/usage-time/sessions")
     def get_usage_time_sessions(model: str = "gmm"):
@@ -329,7 +334,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "chatgpt": {"browser_channel", "include_files", "stop_on_first_unchanged"},
             "gemini": {"enabled", "secure_1psid", "secure_1psidts", "proxy", "page_size", "read_limit", "recent_refetch_count", "retry_delays_seconds"},
             "analytics": {"session_gap_minutes", "single_prompt_minutes", "session_tail_minutes"},
-            "usage_time": {"tail_allowance_minutes", "min_model_samples", "random_state"},
+            "usage_time": {"tail_allowance_minutes", "boundary_threshold", "min_model_samples", "random_state"},
             "topics": {"provider", "base_url", "model", "api_key", "preferences"},
             "storage": {"method", "database_path", "raw_conversations_dir", "import_roots"},
         }
