@@ -63,8 +63,8 @@ python -m venv .venv
 ## 安装
 
 ```powershell
-git clone git@github.com:Sundance0604/VisualGPT.git
-cd VisualGPT
+git clone git@github.com:Sundance0604/Aistory.git
+cd Aistory
 
 python -m pip install -r requirements.txt
 python -m playwright install chromium
