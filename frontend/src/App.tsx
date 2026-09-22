@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, LayoutDashboard, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
+import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, Clock3, LayoutDashboard, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
 import { api } from './api'
 import { ActivityPage } from './pages/ActivityPage'
 import { ConversationDrawer } from './components/ConversationDrawer'
@@ -10,11 +10,12 @@ import { Overview } from './pages/Overview'
 import { Settings } from './pages/Settings'
 import { SyncPage } from './pages/SyncPage'
 import { Topics } from './pages/Topics'
+import { UsageTime } from './pages/UsageTime'
 import type { Conversation, Day, Summary } from './types'
 
-type Page = 'overview' | 'activity' | 'lifecycle' | 'history' | 'topics' | 'conversations' | 'sync' | 'settings'
+type Page = 'overview' | 'activity' | 'usage' | 'lifecycle' | 'history' | 'topics' | 'conversations' | 'sync' | 'settings'
 const navigation: [Page, string, typeof LayoutDashboard][] = [
-  ['overview', '概览', LayoutDashboard], ['activity', '活动', ActivityIcon], ['lifecycle', '生命周期', ChartNoAxesColumn], ['history', '纪录', ChartNoAxesColumn], ['topics', '主题', Tags], ['conversations', '对话', Archive], ['sync', '同步', RefreshCw], ['settings', '设置', SettingsIcon],
+  ['overview', '概览', LayoutDashboard], ['activity', '活动', ActivityIcon], ['usage', '时长', Clock3], ['lifecycle', '生命周期', ChartNoAxesColumn], ['history', '纪录', ChartNoAxesColumn], ['topics', '主题', Tags], ['conversations', '对话', Archive], ['sync', '同步', RefreshCw], ['settings', '设置', SettingsIcon],
 ]
 
 const emptySummary: Summary = { conversations: 0, prompts: 0, prompt_visible_tokens: 0, response_visible_tokens: 0, total_visible_tokens: 0, active_days: 0, first_activity: null, latest_activity: null }
@@ -34,8 +35,9 @@ export default function App() {
       .catch((reason) => setError(reason.message))
   }, [provider])
   const openConversation = (id: string) => setConversationId(id)
-  const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} onConversation={openConversation} />
+  const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} provider={provider} onConversation={openConversation} />
     : page === 'activity' ? <ActivityPage initial={days} provider={provider} onConversation={openConversation} />
+    : page === 'usage' ? <UsageTime />
     : page === 'lifecycle' ? <Lifecycle provider={provider} onConversation={openConversation} />
     : page === 'history' ? <History provider={provider} onConversation={openConversation} />
     : page === 'topics' ? <Topics provider={provider} />
@@ -44,7 +46,7 @@ export default function App() {
   return (
     <div className={`app-shell theme-${provider || 'all'}`}>
       <aside className="sidebar">
-        <div className="brand"><span>G</span><div><b>GPT Activity</b><small>LOCAL ARCHIVE</small></div></div>
+        <div className="brand"><span>A</span><div><b>Aistory</b><small>LOCAL AI HISTORY</small></div></div>
         <nav>{navigation.map(([key, label, Icon]) => <button className={page === key ? 'active' : ''} onClick={() => { setPage(key); setConversationId(undefined) }} key={key}><Icon size={18} /><span>{label}</span></button>)}</nav>
         <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部</option><option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option></select></label>
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>

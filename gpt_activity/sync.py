@@ -311,7 +311,9 @@ def run_sync(
         )
     if status != "failed":
         from .analytics import refresh_analytics
+        from .usage_time import refresh_usage_time
         refresh_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
+        refresh_usage_time(settings.database_path, settings.values.get("usage_time", {}))
     return overall
 
 

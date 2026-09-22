@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import type { Day } from '../types'
-import { number } from '../api'
+import React, { useEffect, useMemo, useState } from 'react'
+import type { Day, DayConversation } from '../types'
+import { api, compact, number } from '../api'
 
 type Metric = 'prompts' | 'total_visible_tokens' | 'active_conversations'
 
@@ -14,7 +14,7 @@ function dayKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-export function ActivityHeatmap({ data, onDay }: { data: Day[]; onDay?: (day: string) => void }) {
+export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: { data: Day[]; provider?: string; onDay?: (day: string) => void; onConversation?: (id: string) => void }) {
   const availableYears = useMemo(() => {
     const years = [...new Set(data.map((item) => Number(item.date.slice(0, 4))))].sort((a, b) => b - a)
     return years.length ? years : [new Date().getFullYear()]
@@ -22,6 +22,8 @@ export function ActivityHeatmap({ data, onDay }: { data: Day[]; onDay?: (day: st
   const [year, setYear] = useState(availableYears[0])
   const [metric, setMetric] = useState<Metric>('prompts')
   const [selectedKey, setSelectedKey] = useState<string>()
+  const [conversations, setConversations] = useState<DayConversation[]>([])
+  const [loadingDay, setLoadingDay] = useState(false)
   const byDate = useMemo(() => new Map(data.map((item) => [item.date, item])), [data])
   const layout = useMemo(() => {
     const start = new Date(year, 0, 1)
@@ -59,6 +61,22 @@ export function ActivityHeatmap({ data, onDay }: { data: Day[]; onDay?: (day: st
   }
   const width = 42 + 54 * 13
   const selected = selectedKey ? byDate.get(selectedKey) : undefined
+  useEffect(() => {
+    if (!availableYears.includes(year)) setYear(availableYears[0])
+    setSelectedKey(undefined)
+    setConversations([])
+  }, [data, provider, availableYears, year])
+
+  const selectDay = async (key: string) => {
+    setSelectedKey(key)
+    onDay?.(key)
+    setLoadingDay(true)
+    try {
+      setConversations(await api<DayConversation[]>(`/api/activity/${key}/conversations?provider=${encodeURIComponent(provider)}`))
+    } finally {
+      setLoadingDay(false)
+    }
+  }
 
   return (
     <section className="panel heatmap-panel">
@@ -100,8 +118,8 @@ export function ActivityHeatmap({ data, onDay }: { data: Day[]; onDay?: (day: st
                 rx="2"
                 role={!muted && item ? 'button' : undefined}
                 tabIndex={!muted && item ? 0 : undefined}
-                onClick={() => { if (!muted && item) { setSelectedKey(cell.key); onDay?.(cell.key) } }}
-                onKeyDown={(event) => { if (!muted && item && (event.key === 'Enter' || event.key === ' ')) { setSelectedKey(cell.key); onDay?.(cell.key) } }}
+                onClick={() => { if (!muted && item) void selectDay(cell.key) }}
+                onKeyDown={(event) => { if (!muted && item && (event.key === 'Enter' || event.key === ' ')) void selectDay(cell.key) }}
               ><title>{title}</title></rect>
             )
           })}
@@ -109,6 +127,7 @@ export function ActivityHeatmap({ data, onDay }: { data: Day[]; onDay?: (day: st
       </div>
       <div className="legend"><span>少</span>{[0, 1, 2, 3, 4].map((item) => <i className={`level-${item}`} key={item} />)}<span>多</span><b>非零天按四分位分档</b></div>
       {selected && <div className="day-detail"><div><span className="eyebrow">所选日期</span><b>{selected.date}</b></div><div><strong>{number.format(selected.prompts)}</strong><span>提示</span></div><div><strong>{number.format(selected.total_visible_tokens)}</strong><span>总可见 Token</span></div><div><strong>{number.format(selected.prompt_visible_tokens)}</strong><span>输入</span></div><div><strong>{number.format(selected.response_visible_tokens)}</strong><span>输出</span></div></div>}
+      {selected && <div className="heatmap-day-conversations"><div className="day-list-heading"><span className="eyebrow">当日进行的对话</span><b>{loadingDay ? '读取中…' : `${conversations.length} 个对话`}</b></div><div className="day-conversations">{conversations.map(row => <button onClick={() => onConversation?.(row.id)} key={row.id} style={{'--topic-color': row.topic_color || 'var(--accent)'} as React.CSSProperties}><span className="topic-dot"/><div><b>{row.title}</b><small>{row.account_name} · {row.provider.toUpperCase()} · {row.dominant_topic || '未分类'}</small></div><strong>{compact(row.prompts)} 提示 · {compact(row.total_visible_tokens)} Token</strong></button>)}</div></div>}
     </section>
   )
 }

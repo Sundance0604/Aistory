@@ -54,6 +54,11 @@ DEFAULTS: dict[str, Any] = {
         "single_prompt_minutes": 5,
         "session_tail_minutes": 5,
     },
+    "usage_time": {
+        "tail_allowance_minutes": 5,
+        "min_model_samples": 50,
+        "random_state": 42,
+    },
     "topics": {
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",

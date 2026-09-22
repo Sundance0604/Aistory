@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -175,6 +175,73 @@ CREATE TABLE IF NOT EXISTS daily_conversation_activity (
     PRIMARY KEY(activity_date, conversation_id)
 );
 CREATE INDEX IF NOT EXISTS idx_daily_conversation_date ON daily_conversation_activity(activity_date);
+
+CREATE TABLE IF NOT EXISTS usage_time_model_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trained_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    sample_count INTEGER NOT NULL,
+    user_events INTEGER NOT NULL,
+    first_event TEXT,
+    last_event TEXT,
+    platforms_json TEXT NOT NULL,
+    accounts_json TEXT NOT NULL,
+    feature_names_json TEXT NOT NULL,
+    feature_transform_json TEXT NOT NULL,
+    random_state INTEGER NOT NULL,
+    tail_allowance_seconds INTEGER NOT NULL,
+    summary_json TEXT NOT NULL,
+    error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS usage_time_model_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES usage_time_model_runs(id) ON DELETE CASCADE,
+    model_family TEXT NOT NULL,
+    component_or_state_count INTEGER NOT NULL,
+    feature_set TEXT NOT NULL,
+    log_likelihood REAL NOT NULL,
+    aic REAL NOT NULL,
+    bic REAL NOT NULL,
+    selected_by_aic INTEGER NOT NULL DEFAULT 0,
+    selected_by_bic INTEGER NOT NULL DEFAULT 0,
+    parameters_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_candidates_run ON usage_time_model_candidates(run_id);
+
+CREATE TABLE IF NOT EXISTS interaction_gaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES usage_time_model_runs(id) ON DELETE CASCADE,
+    from_message_id TEXT NOT NULL,
+    to_message_id TEXT NOT NULL,
+    from_timestamp TEXT NOT NULL,
+    to_timestamp TEXT NOT NULL,
+    gap_seconds REAL NOT NULL,
+    prev_input_tokens INTEGER NOT NULL,
+    prev_output_tokens INTEGER NOT NULL,
+    next_input_tokens INTEGER NOT NULL,
+    same_conversation INTEGER NOT NULL,
+    same_account INTEGER NOT NULL,
+    same_platform INTEGER NOT NULL,
+    gmm_break_probability REAL,
+    hmm_break_probability REAL
+);
+CREATE INDEX IF NOT EXISTS idx_interaction_gaps_run ON interaction_gaps(run_id, id);
+
+CREATE TABLE IF NOT EXISTS usage_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL REFERENCES usage_time_model_runs(id) ON DELETE CASCADE,
+    model_family TEXT NOT NULL,
+    session_index INTEGER NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    event_count INTEGER NOT NULL,
+    session_span_seconds REAL NOT NULL,
+    estimated_usage_seconds REAL NOT NULL,
+    UNIQUE(run_id, model_family, session_index)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_sessions_run ON usage_sessions(run_id, model_family);
 """
 
 

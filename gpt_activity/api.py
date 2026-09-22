@@ -27,6 +27,17 @@ from .db import connect, ensure_account, migrate
 from .importer import import_json
 from .sync import last_sync_status, run_sync
 from .topics import classify_prompts, topic_detail, topic_distribution, topic_timeline
+from .usage_time import (
+    ensure_usage_time,
+    refresh_usage_time,
+    usage_associations,
+    usage_candidates,
+    usage_disagreements,
+    usage_distribution,
+    usage_model,
+    usage_sessions,
+    usage_summary,
+)
 
 
 JOB_LOCK = threading.Lock()
@@ -63,7 +74,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             configured_account.get("provider") or "chatgpt",
         )
     ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
-    app = FastAPI(title="GPT Activity", version=__version__)
+    ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}))
+    app = FastAPI(title="Aistory", version=__version__)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -117,6 +129,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/records")
     def get_records(provider: str = ""):
         return records(settings.database_path, settings.timezone, provider)
+
+    @app.get("/api/usage-time/summary")
+    def get_usage_time_summary():
+        return usage_summary(settings.database_path)
+
+    @app.get("/api/usage-time/distribution")
+    def get_usage_time_distribution():
+        return usage_distribution(settings.database_path)
+
+    @app.get("/api/usage-time/associations")
+    def get_usage_time_associations():
+        return usage_associations(settings.database_path)
+
+    @app.get("/api/usage-time/model-candidates")
+    def get_usage_time_candidates():
+        return usage_candidates(settings.database_path)
+
+    @app.get("/api/usage-time/gmm")
+    def get_usage_time_gmm():
+        return usage_model(settings.database_path, "gmm")
+
+    @app.get("/api/usage-time/hmm")
+    def get_usage_time_hmm():
+        return usage_model(settings.database_path, "hmm")
+
+    @app.get("/api/usage-time/disagreements")
+    def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500)):
+        return usage_disagreements(settings.database_path, limit)
+
+    @app.get("/api/usage-time/sessions")
+    def get_usage_time_sessions(model: str = "gmm"):
+        try:
+            return usage_sessions(settings.database_path, model)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/usage-time/rebuild")
+    def rebuild_usage_time():
+        return _start_job("usage-time", lambda: refresh_usage_time(settings.database_path, settings.values.get("usage_time", {})))
 
     @app.get("/api/conversations")
     def get_conversations(
@@ -272,12 +323,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/settings")
     def update_settings(body: dict[str, Any]):
-        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "gemini": {}, "analytics": {}, "topics": {}, "storage": {}}
+        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "gemini": {}, "analytics": {}, "usage_time": {}, "topics": {}, "storage": {}}
         keys = {
             "app": {"timezone"},
             "chatgpt": {"browser_channel", "include_files", "stop_on_first_unchanged"},
             "gemini": {"enabled", "secure_1psid", "secure_1psidts", "proxy", "page_size", "read_limit", "recent_refetch_count", "retry_delays_seconds"},
             "analytics": {"session_gap_minutes", "single_prompt_minutes", "session_tail_minutes"},
+            "usage_time": {"tail_allowance_minutes", "min_model_samples", "random_state"},
             "topics": {"provider", "base_url", "model", "api_key", "preferences"},
             "storage": {"method", "database_path", "raw_conversations_dir", "import_roots"},
         }
@@ -300,6 +352,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 configured_account.get("provider") or "chatgpt",
             )
         ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}))
         return settings.public_values()
 
     frontend = settings.root / "frontend" / "dist"
