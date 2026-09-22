@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle2, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw } from 'lucide-react'
 import { api, compact, dateLabel } from '../api'
 import type { Account } from '../types'
 
@@ -9,12 +9,16 @@ export function SyncPage() {
   const [selected, setSelected] = useState<string[]>([])
   const [importPath, setImportPath] = useState('')
   const [importAccount, setImportAccount] = useState('default')
+  const [requestError, setRequestError] = useState('')
   const refresh = () => api('/api/sync/status').then(setState)
   useEffect(() => { refresh(); api<Account[]>('/api/accounts').then((items) => { setAccounts(items); setSelected(items.filter((item) => item.enabled).map((item) => item.id)); if (items[0]) setImportAccount(items[0].id) }); const timer = setInterval(refresh, 2000); return () => clearInterval(timer) }, [])
-  const start = async (fullIndex = false) => { await api('/api/sync', { method: 'POST', body: JSON.stringify({ full_index: fullIndex, account_ids: selected }) }); refresh() }
+  const start = async (fullIndex = false) => { setRequestError(''); try { await api('/api/sync', { method: 'POST', body: JSON.stringify({ full_index: fullIndex, account_ids: selected }) }); refresh() } catch (reason) { setRequestError(reason instanceof Error ? reason.message : String(reason)) } }
   const startImport = async () => { await api('/api/import', { method: 'POST', body: JSON.stringify({ path: importPath, account_id: importAccount, keep_raw: true }) }); refresh() }
   const active = state.job?.status === 'running'
   const last = state.last_sync || {}
+  const result = state.job?.kind === 'sync' && state.job?.result ? state.job.result : last
+  const failures = (result.accounts || []).filter((item: any) => item.status === 'failed' || item.error)
+  const failed = result.status === 'failed'
   return (
     <div className="page-stack narrow">
       <header className="page-header"><div><span className="eyebrow">增量更新</span><h1>同步</h1></div><p>登录过期时会打开浏览器要求重新登录。</p></header>
@@ -33,9 +37,10 @@ export function SyncPage() {
         <div className="button-row"><button disabled={active || !importPath} onClick={startImport}>开始导入</button></div>
       </section>
       <section className="panel sync-result">
-        <header><CheckCircle2 size={20} /><div><span className="eyebrow">上次同步</span><h3>{last.status === 'never' ? '尚未同步' : dateLabel(last.finished_at)}</h3></div></header>
-        <div><span><b>{compact(last.index_items_seen || 0)}</b> 已扫描</span><span><b>{compact(last.new_conversations || 0)}</b> 新增</span><span><b>{compact(last.updated_conversations || 0)}</b> 变更</span><span><b>{compact(last.unchanged_conversations || 0)}</b> 未变</span></div>
-        {state.job?.error && <p className="error">{state.job.error}</p>}
+        <header>{failed ? <AlertTriangle className="error" size={20} /> : <CheckCircle2 size={20} />}<div><span className="eyebrow">上次同步</span><h3>{result.status === 'never' ? '尚未同步' : failed ? '同步失败' : dateLabel(result.finished_at)}</h3></div></header>
+        <div><span><b>{compact(result.index_items_seen || 0)}</b> 已扫描</span><span><b>{compact(result.new_conversations || 0)}</b> 新增</span><span><b>{compact(result.updated_conversations || 0)}</b> 变更</span><span><b>{compact(result.unchanged_conversations || 0)}</b> 未变</span></div>
+        {(requestError || state.job?.error) && <p className="error">{requestError || state.job.error}</p>}
+        {failures.map((item: any) => <p className="error sync-error" key={item.account_id}><b>{item.account_name || item.account_id}：</b>{item.error || '同步失败'}{String(item.error || '').toLowerCase().includes('auth') || String(item.error || '').toLowerCase().includes('permission') ? '。请在“设置 → Gemini 读取”更新 Cookie。' : ''}</p>)}
         {state.job?.kind === 'import' && state.job?.status === 'complete' && <p className="success">导入完成：读取 {state.job.result?.seen || 0} 条，写入 {state.job.result?.imported || 0} 条，未变化 {state.job.result?.unchanged || 0} 条，失败 {state.job.result?.failed || 0} 条。</p>}
       </section>
       <p className="privacy-note">默认不同步账户 File Library。只有 CLI 的显式 <code>--include-files</code> 选项会启用它。</p>

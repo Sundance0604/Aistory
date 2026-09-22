@@ -213,9 +213,18 @@ def aggregate_series(db_path, timezone_name, granularity, provider="", account_i
 SORT_EXPRESSIONS = {"total_visible_tokens":"s.total_visible_tokens","prompt_visible_tokens":"s.prompt_visible_tokens","response_visible_tokens":"s.response_visible_tokens","prompts":"s.prompts","turns":"s.turns","created_at":"c.created_at","updated_at":"c.updated_at"}
 
 
-def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset=0, search="", account_id="", provider=""):
+def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset=0, search="", account_id="", provider="", topic_id=0):
     order = SORT_EXPRESSIONS.get(sort, SORT_EXPRESSIONS["total_visible_tokens"])
     where, values = _scope(provider, account_id)
+    topic_id = max(0, int(topic_id or 0))
+    topic_filter = """
+      AND (?=0 OR EXISTS (
+        SELECT 1 FROM messages tm
+        JOIN message_topics tmt ON tmt.message_id=tm.id
+        JOIN topics tt ON tt.id=tmt.topic_id
+        WHERE tm.conversation_id=c.id AND (tt.id=? OR tt.parent_id=?)
+      ))
+    """
     with connect(db_path) as conn:
         rows = conn.execute(
             f"""SELECT c.id,c.provider,c.account_id,a.name account_name,c.title,c.created_at,c.updated_at,c.model_hint,
@@ -227,8 +236,8 @@ def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset
                JOIN topics t0 ON t0.id=mt.topic_id JOIN topics t ON t.id=COALESCE(t0.parent_id,t0.id)
                WHERE mm.conversation_id=c.id GROUP BY t.id ORDER BY w DESC LIMIT 3) q) topics
             FROM conversations c JOIN accounts a ON a.id=c.account_id LEFT JOIN conversation_stats s ON s.conversation_id=c.id
-            WHERE c.title LIKE ? {where} ORDER BY {order} DESC,c.updated_at DESC LIMIT ? OFFSET ?""",
-            [f"%{search}%", *values, max(1, min(limit, 5000)), max(0, offset)]
+            WHERE c.title LIKE ? {where} {topic_filter} ORDER BY {order} DESC,c.updated_at DESC LIMIT ? OFFSET ?""",
+            [f"%{search}%", *values, topic_id, topic_id, topic_id, max(1, min(limit, 5000)), max(0, offset)]
         ).fetchall()
     result = []
     for row in rows:

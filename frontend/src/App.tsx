@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, LayoutDashboard, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
 import { api } from './api'
 import { ActivityPage } from './pages/ActivityPage'
+import { ConversationDrawer } from './components/ConversationDrawer'
 import { Conversations } from './pages/Conversations'
 import { History } from './pages/History'
 import { Lifecycle } from './pages/Lifecycle'
@@ -32,23 +33,24 @@ export default function App() {
       .then(([s, d, c]) => { setSummary(s); setDays(d); setTop(c) })
       .catch((reason) => setError(reason.message))
   }, [provider])
-  const openConversation = (id: string) => { setConversationId(id); setPage('conversations') }
+  const openConversation = (id: string) => setConversationId(id)
   const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} onConversation={openConversation} />
     : page === 'activity' ? <ActivityPage initial={days} provider={provider} onConversation={openConversation} />
     : page === 'lifecycle' ? <Lifecycle provider={provider} onConversation={openConversation} />
     : page === 'history' ? <History provider={provider} onConversation={openConversation} />
     : page === 'topics' ? <Topics provider={provider} />
-    : page === 'conversations' ? <Conversations provider={provider} requestedId={conversationId} onClose={() => setConversationId(undefined)} />
+    : page === 'conversations' ? <Conversations provider={provider} onConversation={openConversation} />
     : page === 'sync' ? <SyncPage /> : <Settings />
   return (
     <div className={`app-shell theme-${provider || 'all'}`}>
       <aside className="sidebar">
         <div className="brand"><span>G</span><div><b>GPT Activity</b><small>LOCAL ARCHIVE</small></div></div>
-        <nav>{navigation.map(([key, label, Icon]) => <button className={page === key ? 'active' : ''} onClick={() => { setPage(key); if (key !== 'conversations') setConversationId(undefined) }} key={key}><Icon size={18} /><span>{label}</span></button>)}</nav>
+        <nav>{navigation.map(([key, label, Icon]) => <button className={page === key ? 'active' : ''} onClick={() => { setPage(key); setConversationId(undefined) }} key={key}><Icon size={18} /><span>{label}</span></button>)}</nav>
         <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部</option><option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option></select></label>
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>
       </aside>
       <main>{error ? <div className="error-banner"><b>无法读取本地 API</b><span>{error}</span></div> : content}</main>
+      <ConversationDrawer conversationId={conversationId} onClose={() => setConversationId(undefined)} />
     </div>
   )
 }

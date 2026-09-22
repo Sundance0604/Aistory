@@ -179,6 +179,10 @@ async def _sync(settings: Settings, account: dict[str, Any], force_fetch: bool) 
     ensure_account(settings.database_path, account_id, account.get("name") or account_id, "gemini")
     try:
         await client.init(timeout=int(config.get("request_timeout_seconds", 60)), auto_close=False, auto_refresh=False)
+        # gemini-webapi can finish init with an anonymous session.  Without this
+        # guard the list RPC simply returns no rows and the UI misleadingly
+        # reports a successful zero-conversation sync.
+        client._check_account_status(raise_error=True)
         page_size = min(100, int(config.get("page_size", 100)))
         regular = await _list_category(client, 0, page_size)
         pinned = await _list_category(client, 1, page_size)

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
-from gpt_activity.analytics import day_conversations, lifecycle, summary, daily_series
+from gpt_activity.analytics import conversation_rankings, day_conversations, lifecycle, summary, daily_series
 from gpt_activity.config import load_settings
 from gpt_activity.db import connect
 from gpt_activity.importer import import_json
@@ -67,6 +67,27 @@ def test_materialized_lifecycle_and_day_drilldown(tmp_path):
     assert len(drilldown) == 1
     assert drilldown[0]["prompts"] == 2
     assert drilldown[0]["total_visible_tokens"] > 0
+
+
+def test_conversations_can_be_filtered_by_parent_topic(tmp_path):
+    settings = settings_for(tmp_path)
+    import_json(settings, FIXTURE)
+    with connect(settings.database_path) as conn:
+        conversation_id = conn.execute("SELECT id FROM conversations").fetchone()["id"]
+        message_id = conn.execute("SELECT id FROM messages WHERE role='user' LIMIT 1").fetchone()["id"]
+        parent_id = conn.execute(
+            "INSERT INTO topics(name,slug,level,color,color_source,created_at) VALUES('Programming','programming',1,'#123456','auto','now')"
+        ).lastrowid
+        child_id = conn.execute(
+            "INSERT INTO topics(parent_id,name,slug,level,color,color_source,created_at) VALUES(?, 'Python','programming/python',2,'#234567','auto','now')",
+            (parent_id,),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO message_topics(message_id,topic_id,weight,classifier,classifier_version,classified_at) VALUES(?,?,1,'test','test','now')",
+            (message_id, child_id),
+        )
+    assert [row["id"] for row in conversation_rankings(settings.database_path, topic_id=parent_id)] == [conversation_id]
+    assert conversation_rankings(settings.database_path, topic_id=999999) == []
 
 
 def test_official_export_zip_and_same_remote_id_are_namespaced_by_account(tmp_path):

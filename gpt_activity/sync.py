@@ -283,7 +283,17 @@ def run_sync(
             result = _sync_account(
                 settings, account, full_index=full_index, force_fetch=force_fetch, include_files=include_files,
             )
+        result["finished_at"] = datetime.now(timezone.utc).isoformat()
         account_results.append(result)
+        with connect(settings.database_path) as conn:
+            conn.execute(
+                "INSERT INTO app_metadata(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (
+                    f"last_sync_status:{account['id']}",
+                    json.dumps(result, ensure_ascii=False),
+                ),
+            )
         for key in totals:
             totals[key] += int(result.get(key, 0))
 

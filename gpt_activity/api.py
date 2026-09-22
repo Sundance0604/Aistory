@@ -95,8 +95,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search: str = "",
         account_id: str = "",
         provider: str = "",
+        topic_id: int = Query(0, ge=0),
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, topic_id)
 
     @app.get("/api/activity/{date}/conversations")
     def get_day_conversations(date: str, provider: str = "", account_id: str = ""):
@@ -125,8 +126,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search: str = "",
         account_id: str = "",
         provider: str = "",
+        topic_id: int = Query(0, ge=0),
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, topic_id)
 
     @app.get("/api/conversations/{conversation_id}")
     def get_conversation(conversation_id: str):

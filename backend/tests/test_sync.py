@@ -93,3 +93,24 @@ def test_multiple_accounts_are_synchronized_sequentially(tmp_path, monkeypatch):
     result = run_sync(settings)
     assert order == ["one", "two"]
     assert [item["account_id"] for item in result["accounts"]] == order
+
+
+def test_provider_sync_status_is_persisted_per_account(tmp_path, monkeypatch):
+    config = tmp_path / "config.local.json"
+    config.write_text(json.dumps({
+        "storage": {"database_path": "data/test.db", "raw_conversations_dir": "data/raw"},
+        "accounts": [{"id": "gem", "name": "Gem", "provider": "gemini", "enabled": True}],
+    }), encoding="utf-8")
+    settings = load_settings(config)
+
+    def fail_sync(*_args, **_kwargs):
+        raise RuntimeError("authentication expired")
+
+    monkeypatch.setattr("gpt_activity.gemini.run_gemini_sync", fail_sync)
+    result = run_sync(settings)
+    assert result["status"] == "failed"
+    from gpt_activity.db import connect
+    with connect(settings.database_path) as conn:
+        saved = json.loads(conn.execute("SELECT value FROM app_metadata WHERE key='last_sync_status:gem'").fetchone()["value"])
+    assert saved["status"] == "failed"
+    assert "authentication expired" in saved["error"]

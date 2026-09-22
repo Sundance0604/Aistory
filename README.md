@@ -228,6 +228,8 @@ python -m gpt_activity sync --account gemini-personal
 
 Gemini 同步会完整分页读取普通与置顶会话并按 ID 去重。用户的纯图片等非文本回合会保留为零 Token、不可分类的附件事件；不会下载或 OCR 媒体。Gemini Web 同样是非公开接口，Cookie 失效后需要重新填写。更多实现口径见 [docs/gemini_analytics_implementation.md](docs/gemini_analytics_implementation.md)。
 
+如果同步后仍显示 0 条，请先查看“同步”页的账号级错误：连接超时通常表示需要在“设置 → Gemini 读取”填写本机 HTTP 代理（例如 `http://127.0.0.1:7890`）；“unauthenticated / permission denied”表示 Cookie 已失效，需要从已登录的 Gemini 网页重新复制 `Secure-1PSID` 与 `Secure-1PSIDTS`。应用不会再把未认证响应误报为“成功同步 0 条”。
+
 ## 导入 ChatGPT 官方导出数据
 
 支持以下输入：
