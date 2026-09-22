@@ -6,7 +6,7 @@ import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
@@ -173,7 +173,13 @@ def _topic_id(conn, parent_name: str, topic_name: str, now: str) -> int:
     return conn.execute("SELECT id FROM topics WHERE slug=?", (child_slug,)).fetchone()["id"]
 
 
-def classify_prompts(settings: Settings, *, reclassify: bool = False, limit: int | None = None) -> dict[str, int]:
+def classify_prompts(
+    settings: Settings,
+    *,
+    reclassify: bool = False,
+    limit: int | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, int]:
     migrate(settings.database_path)
     classifier = DeepSeekTopicClassifier(settings)
     max_chars = int(settings.values["topics"]["max_context_chars"])
@@ -193,6 +199,15 @@ def classify_prompts(settings: Settings, *, reclassify: bool = False, limit: int
         prompts = [dict(row) for row in conn.execute(query, params).fetchall()]
 
     completed = failed = 0
+    if progress_callback:
+        progress_callback({
+            "phase": "classifying",
+            "total": len(prompts),
+            "processed": 0,
+            "classified": 0,
+            "failed": 0,
+            "percent": 0 if prompts else 100,
+        })
 
     def process(prompt: dict[str, Any]) -> tuple[str, str, str | None]:
         with connect(settings.database_path) as conn:
@@ -259,6 +274,15 @@ def classify_prompts(settings: Settings, *, reclassify: bool = False, limit: int
                 else:
                     failed += 1
                     print(f"[TOPICS {index}/{len(prompts)}] failed ({error_name})", flush=True)
+                if progress_callback:
+                    progress_callback({
+                        "phase": "classifying",
+                        "total": len(prompts),
+                        "processed": index,
+                        "classified": completed,
+                        "failed": failed,
+                        "percent": round(index / max(len(prompts), 1) * 100, 1),
+                    })
     finally:
         classifier.close()
     return {"queued": len(prompts), "classified": completed, "failed": failed}

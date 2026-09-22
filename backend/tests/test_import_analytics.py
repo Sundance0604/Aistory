@@ -2,7 +2,10 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
+from fastapi.testclient import TestClient
+
 from gpt_activity.analytics import conversation_rankings, day_conversations, lifecycle, summary, daily_series
+from gpt_activity.api import create_app
 from gpt_activity.config import load_settings
 from gpt_activity.db import connect
 from gpt_activity.importer import import_json
@@ -88,6 +91,19 @@ def test_conversations_can_be_filtered_by_parent_topic(tmp_path):
         )
     assert [row["id"] for row in conversation_rankings(settings.database_path, topic_id=parent_id)] == [conversation_id]
     assert conversation_rankings(settings.database_path, topic_id=999999) == []
+
+
+def test_conversation_filters_accept_blank_topic_and_search_content(tmp_path):
+    settings = settings_for(tmp_path)
+    import_json(settings, FIXTURE)
+    client = TestClient(create_app(settings))
+    response = client.get(
+        "/api/conversations",
+        params={"topic_id": "", "account_id": "default", "search": "Cayley table"},
+    )
+    assert response.status_code == 200
+    assert [row["title"] for row in response.json()] == ["Branch fixture"]
+    assert client.get("/api/conversations", params={"topic_id": "", "account_id": "missing"}).json() == []
 
 
 def test_official_export_zip_and_same_remote_id_are_namespaced_by_account(tmp_path):

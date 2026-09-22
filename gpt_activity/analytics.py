@@ -236,8 +236,11 @@ def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset
                JOIN topics t0 ON t0.id=mt.topic_id JOIN topics t ON t.id=COALESCE(t0.parent_id,t0.id)
                WHERE mm.conversation_id=c.id GROUP BY t.id ORDER BY w DESC LIMIT 3) q) topics
             FROM conversations c JOIN accounts a ON a.id=c.account_id LEFT JOIN conversation_stats s ON s.conversation_id=c.id
-            WHERE c.title LIKE ? {where} {topic_filter} ORDER BY {order} DESC,c.updated_at DESC LIMIT ? OFFSET ?""",
-            [f"%{search}%", *values, topic_id, topic_id, topic_id, max(1, min(limit, 5000)), max(0, offset)]
+            WHERE (c.title LIKE ? OR EXISTS (
+                SELECT 1 FROM messages sm
+                WHERE sm.conversation_id=c.id AND sm.visible_text LIKE ?
+            )) {where} {topic_filter} ORDER BY {order} DESC,c.updated_at DESC LIMIT ? OFFSET ?""",
+            [f"%{search}%", f"%{search}%", *values, topic_id, topic_id, topic_id, max(1, min(limit, 5000)), max(0, offset)]
         ).fetchall()
     result = []
     for row in rows:

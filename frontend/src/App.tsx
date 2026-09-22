@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, Clock3, LayoutDashboard, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
+import { Activity as ActivityIcon, Archive, ChartNoAxesColumn, Clock3, LayoutDashboard, LoaderCircle, RefreshCw, Settings as SettingsIcon, Tags } from 'lucide-react'
 import { api } from './api'
 import { ActivityPage } from './pages/ActivityPage'
 import { ConversationDrawer } from './components/ConversationDrawer'
@@ -28,12 +28,19 @@ export default function App() {
   const [conversationId, setConversationId] = useState<string>()
   const [error, setError] = useState('')
   const [provider, setProvider] = useState('')
+  const [job, setJob] = useState<any>({ status: 'idle' })
   useEffect(() => {
     const query = `provider=${provider}`
     Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&${query}`)])
       .then(([s, d, c]) => { setSummary(s); setDays(d); setTop(c) })
       .catch((reason) => setError(reason.message))
   }, [provider])
+  useEffect(() => {
+    const refreshJob = () => api<any>('/api/jobs/status').then(setJob).catch(() => undefined)
+    refreshJob()
+    const timer = setInterval(refreshJob, 1200)
+    return () => clearInterval(timer)
+  }, [])
   const openConversation = (id: string) => setConversationId(id)
   const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} provider={provider} onConversation={openConversation} />
     : page === 'activity' ? <ActivityPage initial={days} provider={provider} onConversation={openConversation} />
@@ -52,6 +59,7 @@ export default function App() {
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>
       </aside>
       <main>{error ? <div className="error-banner"><b>无法读取本地 API</b><span>{error}</span></div> : content}</main>
+      {job.kind === 'topics' && job.status === 'running' && <div className="global-job-progress" role="status" aria-live="polite"><header><LoaderCircle className="spinning" size={17}/><b>正在分析主题</b><span>{job.progress?.total == null ? '准备中' : `${job.progress.processed || 0} / ${job.progress.total}`}</span></header><div><i style={{width:`${job.progress?.percent || 0}%`}} /></div><small>已分类 {job.progress?.classified || 0}{job.progress?.failed ? ` · 失败 ${job.progress.failed}` : ''} · 可继续浏览其他页面</small></div>}
       <ConversationDrawer conversationId={conversationId} onClose={() => setConversationId(undefined)} />
     </div>
   )

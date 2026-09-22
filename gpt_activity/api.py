@@ -42,14 +42,32 @@ from .usage_time import (
 
 
 JOB_LOCK = threading.Lock()
-JOB: dict[str, Any] = {"kind": None, "status": "idle", "result": None, "error": None}
+JOB: dict[str, Any] = {"kind": None, "status": "idle", "result": None, "error": None, "progress": None}
+
+
+def _update_job_progress(progress: dict[str, Any]) -> None:
+    with JOB_LOCK:
+        if JOB["status"] == "running":
+            JOB["progress"] = deepcopy(progress)
+
+
+def _topic_id_value(value: str | int | None) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="topic_id must be a non-negative integer") from exc
+    if parsed < 0:
+        raise HTTPException(status_code=400, detail="topic_id must be a non-negative integer")
+    return parsed
 
 
 def _start_job(kind: str, operation: Callable[[], Any]) -> dict[str, Any]:
     with JOB_LOCK:
         if JOB["status"] == "running":
             raise HTTPException(status_code=409, detail=f"{JOB['kind']} is already running")
-        JOB.update(kind=kind, status="running", result=None, error=None)
+        JOB.update(kind=kind, status="running", result=None, error=None, progress={"phase": "starting"})
 
     def runner():
         try:
@@ -108,9 +126,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search: str = "",
         account_id: str = "",
         provider: str = "",
-        topic_id: int = Query(0, ge=0),
+        topic_id: str = "",
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, topic_id)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, _topic_id_value(topic_id))
 
     @app.get("/api/activity/{date}/conversations")
     def get_day_conversations(date: str, provider: str = "", account_id: str = ""):
@@ -182,9 +200,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search: str = "",
         account_id: str = "",
         provider: str = "",
-        topic_id: int = Query(0, ge=0),
+        topic_id: str = "",
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, topic_id)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider, _topic_id_value(topic_id))
 
     @app.get("/api/conversations/{conversation_id}")
     def get_conversation(conversation_id: str):
@@ -212,6 +230,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with JOB_LOCK:
             current = deepcopy(JOB)
         return {"job": current, "last_sync": last_sync_status(settings, account_id)}
+
+    @app.get("/api/jobs/status")
+    def job_status():
+        with JOB_LOCK:
+            return deepcopy(JOB)
 
     @app.post("/api/import")
     def start_import(body: dict[str, Any]):
@@ -315,12 +338,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/topics/classify-new")
     def classify_new(body: dict[str, Any] | None = None):
         limit = (body or {}).get("limit")
-        return _start_job("topics", lambda: classify_prompts(settings, limit=limit))
+        return _start_job(
+            "topics",
+            lambda: classify_prompts(settings, limit=limit, progress_callback=_update_job_progress),
+        )
 
     @app.post("/api/topics/reclassify")
     def reclassify(body: dict[str, Any] | None = None):
         limit = (body or {}).get("limit")
-        return _start_job("topics", lambda: classify_prompts(settings, reclassify=True, limit=limit))
+        return _start_job(
+            "topics",
+            lambda: classify_prompts(
+                settings, reclassify=True, limit=limit, progress_callback=_update_job_progress
+            ),
+        )
 
     @app.get("/api/settings")
     def get_settings():
