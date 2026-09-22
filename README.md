@@ -1,4 +1,4 @@
-# VisualGPT / GPT Activity
+# Aistory
 
 一个本地优先的 ChatGPT 对话同步、归档与活动分析工具。它把对话保存到本机 SQLite，提供中文 Web 仪表盘，并支持多账号串行同步、官方导出文件导入、可见 Token 估算和可选的主题分类。
 
