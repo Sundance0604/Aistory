@@ -9,7 +9,7 @@ export function Overview({ summary, days, conversations, onConversation }: { sum
   return (
     <div className="page-stack">
       <header className="page-header">
-        <div><span className="eyebrow">你的本地 ChatGPT 档案</span><h1>概览</h1></div>
+        <div><span className="eyebrow">你的本地 AI 对话档案</span><h1>概览</h1></div>
         <p>从可见对话文本计算。数据保留在本机。</p>
       </header>
       <div className="metric-grid">
@@ -21,7 +21,7 @@ export function Overview({ summary, days, conversations, onConversation }: { sum
       <ActivityHeatmap data={days} />
       <div className="two-column">
         <section className="panel">
-          <div className="panel-heading"><div><span className="eyebrow">近期</span><h2>90 天趋势</h2></div></div>
+          <div className="panel-heading"><div><span className="eyebrow">完整历史</span><h2>活动趋势</h2></div></div>
           <MiniBars data={days} />
         </section>
         <section className="panel">

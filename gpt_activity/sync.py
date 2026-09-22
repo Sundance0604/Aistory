@@ -219,7 +219,7 @@ def _local_index(settings: Settings, account_id: str = "default") -> dict[str, d
         return {
             row["remote_id"]: dict(row)
             for row in conn.execute(
-                "SELECT remote_id,updated_at,content_hash FROM conversations WHERE account_id=?",
+                "SELECT remote_id,updated_at,content_hash FROM conversations WHERE provider='chatgpt' AND account_id=?",
                 (account_id,),
             )
         }
@@ -259,13 +259,30 @@ def run_sync(
     # Browser profiles cannot be opened concurrently. Accounts are deliberately
     # synchronized one after another in configuration order.
     for account in accounts:
-        result = _sync_account(
-            settings,
-            account,
-            full_index=full_index,
-            force_fetch=force_fetch,
-            include_files=include_files,
-        )
+        if account.get("provider", "chatgpt") == "gemini":
+            from .gemini import run_gemini_sync
+            try:
+                gemini = run_gemini_sync(settings, account, force_fetch=force_fetch)
+                result = {
+                    "account_id": account["id"], "account_name": account.get("name") or account["id"],
+                    "provider": "gemini", "status": "partial" if gemini["failed"] else "complete",
+                    "error": None, "index_items_seen": gemini["discovered"],
+                    "new_conversations": gemini["new"], "updated_conversations": gemini["updated"],
+                    "unchanged_conversations": gemini["unchanged"], "fetched_conversations": gemini["fetched"],
+                    "failed_conversations": gemini["failed"], "new_messages": gemini["messages"],
+                    "failed_cids": gemini["failed_cids"],
+                    "failures": gemini["failures"],
+                }
+            except Exception as exc:
+                result = {
+                    "account_id": account["id"], "account_name": account.get("name") or account["id"],
+                    "provider": "gemini", "status": "failed", "error": f"{type(exc).__name__}: {exc}",
+                    **{key: 0 for key in totals}, "failed_cids": [], "failures": [],
+                }
+        else:
+            result = _sync_account(
+                settings, account, full_index=full_index, force_fetch=force_fetch, include_files=include_files,
+            )
         account_results.append(result)
         for key in totals:
             totals[key] += int(result.get(key, 0))
@@ -282,6 +299,9 @@ def run_sync(
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (json.dumps(overall, ensure_ascii=False),),
         )
+    if status != "failed":
+        from .analytics import refresh_analytics
+        refresh_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
     return overall
 
 
@@ -295,7 +315,7 @@ def _sync_account(
 ) -> dict[str, Any]:
     account_id = str(account["id"])
     account_name = str(account.get("name") or account_id)
-    ensure_account(settings.database_path, account_id, account_name)
+    ensure_account(settings.database_path, account_id, account_name, "chatgpt")
     started = datetime.now(timezone.utc).isoformat()
     mode = "force" if force_fetch else "full-index" if full_index else "incremental"
     with connect(settings.database_path) as conn:
@@ -423,6 +443,7 @@ def _sync_account(
     return {
         "account_id": account_id,
         "account_name": account_name,
+        "provider": "chatgpt",
         "status": "failed" if error else ("partial" if stats["failed_conversations"] else "complete"),
         "error": error,
         **stats,

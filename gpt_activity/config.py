@@ -25,6 +25,7 @@ DEFAULTS: dict[str, Any] = {
         {
             "id": "default",
             "name": "默认账号",
+            "provider": "chatgpt",
             "browser_profile": "browser_profile",
             "enabled": True,
         }
@@ -39,6 +40,20 @@ DEFAULTS: dict[str, Any] = {
         "max_delay_seconds": 16,
         "stop_on_first_unchanged": True,
     },
+    "gemini": {
+        "enabled": False,
+        "page_size": 100,
+        "read_limit": 10000,
+        "request_timeout_seconds": 60,
+        "recent_refetch_count": 30,
+        "retry_delays_seconds": [1, 3, 10],
+    },
+    "analytics": {
+        "version": 1,
+        "session_gap_minutes": 30,
+        "single_prompt_minutes": 5,
+        "session_tail_minutes": 5,
+    },
     "topics": {
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
@@ -48,6 +63,12 @@ DEFAULTS: dict[str, Any] = {
         "max_context_chars": 2400,
         "max_concurrency": 4,
         "request_timeout_seconds": 90,
+        "preferences": {
+            "keywords": [],
+            "aliases": {},
+            "weights": {},
+            "blocked_topics": [],
+        },
     },
 }
 
@@ -113,10 +134,22 @@ class Settings:
     def api_key(self) -> str:
         return os.environ.get("GPT_ACTIVITY_API_KEY") or self.values["topics"].get("api_key", "")
 
+    @property
+    def gemini_credentials(self) -> tuple[str, str, str | None]:
+        config = self.values.get("gemini", {})
+        psid = os.environ.get("GEMINI_1PSID") or config.get("secure_1psid", "")
+        psidts = os.environ.get("GEMINI_1PSIDTS") or config.get("secure_1psidts", "")
+        proxy = os.environ.get("GEMINI_PROXY") or config.get("proxy") or None
+        return str(psid), str(psidts), str(proxy) if proxy else None
+
     def public_values(self) -> dict[str, Any]:
         public = deepcopy(self.values)
         public["topics"]["api_key"] = ""
         public["topics"]["api_key_configured"] = bool(self.api_key)
+        gemini = public.setdefault("gemini", {})
+        gemini["secure_1psid"] = ""
+        gemini["secure_1psidts"] = ""
+        gemini["credentials_configured"] = bool(self.gemini_credentials[0])
         return public
 
 
@@ -146,9 +179,13 @@ def upsert_account(settings: Settings, account: dict[str, Any]) -> Settings:
         raise ValueError("Account id must use 1-64 letters, numbers, dot, dash, or underscore")
     name = str(account.get("name") or account_id).strip()
     profile = str(account.get("browser_profile") or f"browser_profiles/{account_id}").strip()
+    provider = str(account.get("provider") or "chatgpt").lower()
+    if provider not in {"chatgpt", "gemini"}:
+        raise ValueError("Provider must be chatgpt or gemini")
     entry = {
         "id": account_id,
         "name": name,
+        "provider": provider,
         "browser_profile": profile,
         "enabled": bool(account.get("enabled", True)),
     }

@@ -15,6 +15,9 @@ from .analytics import (
     aggregate_series,
     conversation_detail,
     conversation_rankings,
+    day_conversations,
+    ensure_analytics,
+    lifecycle,
     message_rankings,
     records,
     summary,
@@ -57,7 +60,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.database_path,
             configured_account["id"],
             configured_account.get("name") or configured_account["id"],
+            configured_account.get("provider") or "chatgpt",
         )
+    ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
     app = FastAPI(title="GPT Activity", version=__version__)
     app.add_middleware(
         CORSMiddleware,
@@ -72,13 +77,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     @app.get("/api/summary")
-    def get_summary():
-        return summary(settings.database_path, settings.timezone)
+    def get_summary(provider: str = "", account_id: str = ""):
+        return summary(settings.database_path, settings.timezone, provider, account_id)
 
     @app.get("/api/activity/{granularity}")
-    def get_activity(granularity: str):
+    def get_activity(granularity: str, provider: str = "", account_id: str = ""):
         try:
-            return aggregate_series(settings.database_path, settings.timezone, granularity)
+            return aggregate_series(settings.database_path, settings.timezone, granularity, provider, account_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -89,19 +94,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: int = Query(0, ge=0),
         search: str = "",
         account_id: str = "",
+        provider: str = "",
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider)
+
+    @app.get("/api/activity/{date}/conversations")
+    def get_day_conversations(date: str, provider: str = "", account_id: str = ""):
+        return day_conversations(settings.database_path, date, provider, account_id)
+
+    @app.get("/api/lifecycle")
+    def get_lifecycle(provider: str = "", account_id: str = ""):
+        return lifecycle(settings.database_path, provider, account_id)
 
     @app.get("/api/rankings/messages")
-    def get_message_rankings(role: str = "user", limit: int = Query(20, ge=1, le=200)):
+    def get_message_rankings(role: str = "user", limit: int = Query(20, ge=1, le=200), provider: str = ""):
         try:
-            return message_rankings(settings.database_path, role, limit)
+            return message_rankings(settings.database_path, role, limit, provider)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/records")
-    def get_records():
-        return records(settings.database_path, settings.timezone)
+    def get_records(provider: str = ""):
+        return records(settings.database_path, settings.timezone, provider)
 
     @app.get("/api/conversations")
     def get_conversations(
@@ -110,8 +124,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: int = Query(0, ge=0),
         search: str = "",
         account_id: str = "",
+        provider: str = "",
     ):
-        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id)
+        return conversation_rankings(settings.database_path, sort, limit, offset, search, account_id, provider)
 
     @app.get("/api/conversations/{conversation_id}")
     def get_conversation(conversation_id: str):
@@ -160,6 +175,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 keep_raw=bool(body.get("keep_raw", True)),
                 account_id=account_id,
                 account_name=account.get("name") or account_id,
+                provider=account.get("provider") or "chatgpt",
             ).as_dict(),
         )
 
@@ -167,13 +183,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def get_accounts():
         with connect(settings.database_path) as conn:
             counts = {
-                row["account_id"]: dict(row)
+                (row["provider"], row["account_id"]): dict(row)
                 for row in conn.execute(
-                    "SELECT account_id,COUNT(*) conversations FROM conversations GROUP BY account_id"
+                    "SELECT provider,account_id,COUNT(*) conversations FROM conversations GROUP BY provider,account_id"
                 )
             }
         return [
-            {**account, "conversations": counts.get(account["id"], {}).get("conversations", 0)}
+            {**account, "conversations": counts.get((account.get("provider", "chatgpt"), account["id"]), {}).get("conversations", 0)}
             for account in settings.accounts
         ]
 
@@ -186,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.values.clear()
         settings.values.update(saved.values)
         account = saved.account(str(body.get("id")))
-        ensure_account(settings.database_path, account["id"], account["name"])
+        ensure_account(settings.database_path, account["id"], account["name"], account.get("provider") or "chatgpt")
         return account
 
     @app.get("/api/data-sources")
@@ -212,12 +228,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     @app.get("/api/topics")
-    def get_topics(level: int = Query(1, ge=1, le=2)):
-        return topic_distribution(settings.database_path, level)
+    def get_topics(level: int = Query(1, ge=1, le=2), provider: str = "", account_id: str = ""):
+        return topic_distribution(settings.database_path, level, provider, account_id)
 
     @app.get("/api/topics/timeline")
-    def get_topic_timeline():
-        return topic_timeline(settings.database_path, settings.timezone)
+    def get_topic_timeline(provider: str = "", account_id: str = ""):
+        return topic_timeline(settings.database_path, settings.timezone, provider, account_id)
 
     @app.get("/api/topics/{topic_id}")
     def get_topic(topic_id: int):
@@ -225,6 +241,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not result:
             raise HTTPException(status_code=404, detail="Topic not found")
         return result
+
+    @app.put("/api/topics/{topic_id}/color")
+    def set_topic_color(topic_id: int, body: dict[str, Any]):
+        import re
+        color = str(body.get("color") or "").upper()
+        if not re.fullmatch(r"#[0-9A-F]{6}", color):
+            raise HTTPException(status_code=400, detail="Color must be #RRGGBB")
+        with connect(settings.database_path) as conn:
+            changed = conn.execute("UPDATE topics SET color=?,color_source='user' WHERE id=?", (color, topic_id)).rowcount
+        if not changed:
+            raise HTTPException(status_code=404, detail="Topic not found")
+        return {"id": topic_id, "color": color, "color_source": "user"}
 
     @app.post("/api/topics/classify-new")
     def classify_new(body: dict[str, Any] | None = None):
@@ -242,18 +270,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/settings")
     def update_settings(body: dict[str, Any]):
-        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "topics": {}, "storage": {}}
+        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "gemini": {}, "analytics": {}, "topics": {}, "storage": {}}
         keys = {
             "app": {"timezone"},
             "chatgpt": {"browser_channel", "include_files", "stop_on_first_unchanged"},
-            "topics": {"provider", "base_url", "model", "api_key"},
+            "gemini": {"enabled", "secure_1psid", "secure_1psidts", "proxy", "page_size", "read_limit", "recent_refetch_count", "retry_delays_seconds"},
+            "analytics": {"session_gap_minutes", "single_prompt_minutes", "session_tail_minutes"},
+            "topics": {"provider", "base_url", "model", "api_key", "preferences"},
             "storage": {"method", "database_path", "raw_conversations_dir", "import_roots"},
         }
         for section, section_keys in keys.items():
             for key in section_keys:
                 if key in (body.get(section) or {}):
                     value = body[section][key]
-                    if key == "api_key" and not value:
+                    if key in {"api_key", "secure_1psid", "secure_1psidts"} and not value:
                         continue
                     allowed[section][key] = value
         saved = save_settings(settings, allowed)
@@ -265,7 +295,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 settings.database_path,
                 configured_account["id"],
                 configured_account.get("name") or configured_account["id"],
+                configured_account.get("provider") or "chatgpt",
             )
+        ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
         return settings.public_values()
 
     frontend = settings.root / "frontend" / "dist"

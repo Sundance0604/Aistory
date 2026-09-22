@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from .analytics import summary
+from .analytics import ensure_analytics, summary
 from .config import load_settings, upsert_account
 from .db import connect, ensure_account, migrate
 from .importer import import_json
@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="path to the single JSON configuration file")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    sync = commands.add_parser("sync", help="incrementally synchronize ChatGPT conversations")
+    sync = commands.add_parser("sync", help="incrementally synchronize configured accounts")
     sync.add_argument("--full-index", action="store_true")
     sync.add_argument("--force-fetch", action="store_true")
     sync.add_argument("--include-files", action="store_true", help="explicitly opt into the account File Library sweep")
@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_account.add_argument("id")
     add_account.add_argument("name")
     add_account.add_argument("--profile")
+    add_account.add_argument("--provider", choices=["chatgpt", "gemini"], default="chatgpt")
 
     commands.add_parser("analyze", help="print deterministic local summary")
 
@@ -61,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
             keep_raw=not args.no_raw_copy,
             account_id=args.account,
             account_name=args.account_name,
+            provider=settings.account(args.account).get("provider", "chatgpt"),
         )
         print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
         return 1 if result.failed else 0
@@ -83,12 +85,13 @@ def main(argv: list[str] | None = None) -> int:
         profile = args.profile or f"browser_profiles/{args.id}"
         saved = upsert_account(
             settings,
-            {"id": args.id, "name": args.name, "browser_profile": profile, "enabled": True},
+            {"id": args.id, "name": args.name, "provider": args.provider, "browser_profile": profile, "enabled": True},
         )
-        ensure_account(saved.database_path, args.id, args.name)
+        ensure_account(saved.database_path, args.id, args.name, args.provider)
         print(json.dumps(saved.account(args.id), ensure_ascii=False, indent=2))
         return 0
     if args.command == "analyze":
+        ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
         print(json.dumps(summary(settings.database_path, settings.timezone), ensure_ascii=False, indent=2))
         return 0
     if args.command == "topics":

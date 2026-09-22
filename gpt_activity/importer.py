@@ -59,8 +59,10 @@ def iter_conversation_payloads(path: str | Path) -> Iterator[tuple[str, dict]]:
             yield from _payloads(value, str(source))
 
 
-def _storage_id(account_id: str, remote_id: str) -> str:
-    return remote_id if account_id == "default" else f"{safe_segment(account_id)}::{remote_id}"
+def _storage_id(account_id: str, remote_id: str, provider: str = "chatgpt") -> str:
+    prefix = "" if provider == "chatgpt" else f"{safe_segment(provider)}::"
+    account = "" if account_id == "default" else f"{safe_segment(account_id)}::"
+    return f"{prefix}{account}{remote_id}"
 
 
 def upsert_conversation(
@@ -72,19 +74,20 @@ def upsert_conversation(
     keep_raw: bool = True,
     account_id: str = "default",
     account_name: str | None = None,
+    provider: str = "chatgpt",
 ) -> tuple[str, int]:
     """Return (new|updated|unchanged, inserted active prompt count)."""
     migrate(settings.database_path)
-    ensure_account(settings.database_path, account_id, account_name or account_id)
+    ensure_account(settings.database_path, account_id, account_name or account_id, provider)
     normalized = normalize_conversation(data)
-    conversation_id = _storage_id(account_id, normalized.id)
+    conversation_id = _storage_id(account_id, normalized.id, provider)
     fetched_at = datetime.now(timezone.utc).isoformat()
     raw_path = raw_storage(settings).write(account_id, normalized.id, data) if keep_raw else None
 
     with connect(settings.database_path) as conn:
         existing = conn.execute(
-            "SELECT id,content_hash FROM conversations WHERE account_id=? AND remote_id=?",
-            (account_id, normalized.id),
+            "SELECT id,content_hash FROM conversations WHERE provider=? AND account_id=? AND remote_id=?",
+            (provider, account_id, normalized.id),
         ).fetchone()
         if existing and existing["content_hash"] == normalized.content_hash:
             conn.execute(
@@ -104,9 +107,9 @@ def upsert_conversation(
         conn.execute(
             """
             INSERT INTO conversations(
-              id,account_id,remote_id,title,created_at,updated_at,fetched_at,current_node_id,content_hash,
+              id,account_id,provider,remote_id,title,created_at,updated_at,fetched_at,current_node_id,content_hash,
               archived,model_hint,raw_json_path,source_url,project_id
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET
               title=excluded.title, created_at=excluded.created_at,
               updated_at=excluded.updated_at, fetched_at=excluded.fetched_at,
@@ -119,6 +122,7 @@ def upsert_conversation(
             (
                 conversation_id,
                 account_id,
+                provider,
                 normalized.id,
                 normalized.title,
                 normalized.created_at,
@@ -139,14 +143,14 @@ def upsert_conversation(
             INSERT INTO messages(
               id,conversation_id,parent_id,role,created_at,model,content_type,
               visible_text,visible_tokens,tokenizer_version,content_hash,
-              sequence_index,is_active_branch,has_attachment,raw_metadata_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+              sequence_index,is_active_branch,has_attachment,analyzable,raw_metadata_json
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             [
                 (
-                    _storage_id(account_id, message.id),
+                    _storage_id(account_id, message.id, provider),
                     conversation_id,
-                    _storage_id(account_id, message.parent_id) if message.parent_id else None,
+                    _storage_id(account_id, message.parent_id, provider) if message.parent_id else None,
                     message.role,
                     message.created_at,
                     message.model,
@@ -158,6 +162,7 @@ def upsert_conversation(
                     message.sequence_index,
                     int(message.is_active_branch),
                     int(message.has_attachment),
+                    int(message.analyzable),
                     message.raw_metadata_json,
                 )
                 for message in normalized.messages
@@ -176,6 +181,7 @@ def import_json(
     keep_raw: bool = True,
     account_id: str = "default",
     account_name: str | None = None,
+    provider: str = "chatgpt",
 ) -> ImportResult:
     result = ImportResult()
     payloads = list(iter_conversation_payloads(source))
@@ -191,6 +197,7 @@ def import_json(
                 keep_raw=keep_raw,
                 account_id=account_id,
                 account_name=account_name,
+                provider=provider,
             )
             if state == "unchanged":
                 result.unchanged += 1
@@ -202,7 +209,7 @@ def import_json(
             result.failed += 1
             print(f"[IMPORT {index}/{len(payloads)}] {label}: failed ({type(exc).__name__}: {exc})", flush=True)
     imported_at = datetime.now(timezone.utc).isoformat()
-    ensure_account(settings.database_path, account_id, account_name or account_id)
+    ensure_account(settings.database_path, account_id, account_name or account_id, provider)
     with connect(settings.database_path) as conn:
         conn.execute(
             """
@@ -213,7 +220,7 @@ def import_json(
             """,
             (
                 account_id,
-                "chatgpt-export-zip" if str(source).lower().endswith(".zip") else "chatgpt-export-json",
+                f"{provider}-export-zip" if str(source).lower().endswith(".zip") else f"{provider}-export-json",
                 str(Path(source).resolve()),
                 settings.values["storage"].get("method", "filesystem"),
                 imported_at,
@@ -226,4 +233,6 @@ def import_json(
         f"[IMPORT] complete imported={result.imported} unchanged={result.unchanged} failed={result.failed}",
         flush=True,
     )
+    from .analytics import refresh_analytics
+    refresh_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
     return result

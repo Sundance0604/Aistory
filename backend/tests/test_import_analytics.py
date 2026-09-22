@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from zipfile import ZipFile
 
-from gpt_activity.analytics import daily_series, summary
+from gpt_activity.analytics import day_conversations, lifecycle, summary, daily_series
 from gpt_activity.config import load_settings
 from gpt_activity.db import connect
 from gpt_activity.importer import import_json
@@ -54,6 +54,19 @@ def test_timezone_moves_activity_across_day_boundary(tmp_path):
     import_json(settings, FIXTURE)
     days = daily_series(settings.database_path, settings.timezone)
     assert any(item["date"] == "2024-01-01" and item["prompts"] == 2 for item in days)
+
+
+def test_materialized_lifecycle_and_day_drilldown(tmp_path):
+    settings = settings_for(tmp_path, "Asia/Shanghai")
+    import_json(settings, FIXTURE)
+    life = lifecycle(settings.database_path)
+    assert life[0]["prompts"] == 2
+    assert life[0]["active_days"] == 1
+    assert life[0]["session_count"] >= 1
+    drilldown = day_conversations(settings.database_path, "2024-01-01")
+    assert len(drilldown) == 1
+    assert drilldown[0]["prompts"] == 2
+    assert drilldown[0]["total_visible_tokens"] > 0
 
 
 def test_official_export_zip_and_same_remote_id_are_namespaced_by_account(tmp_path):

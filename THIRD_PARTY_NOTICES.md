@@ -8,6 +8,6 @@ VisualGPT 的 ChatGPT 浏览器登录、会话获取和旧版静态导出能力�
 
 ## Gemini-API
 
-[`HanaokaYuzu/Gemini-API`](https://github.com/HanaokaYuzu/Gemini-API) 仅用于未来 Gemini 扩展的行为和架构调研。本仓库没有复制或合并该项目的源代码。该参考项目采用 AGPL-3.0，任何未来依赖或集成都需要单独评估并遵守其许可证。
+[`HanaokaYuzu/Gemini-API`](https://github.com/HanaokaYuzu/Gemini-API) 作为可选外部 Python 依赖提供 Gemini Web 连接能力。本仓库没有复制或合并该项目的源代码。该项目采用 AGPL-3.0；启用 Gemini 功能的用户和再分发者需要同时遵守其许可证。
 
 其他产品与开源项目调研记录见 [`docs/third_party_references.md`](docs/third_party_references.md)。

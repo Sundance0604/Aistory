@@ -21,6 +21,7 @@ export type Day = {
 
 export type Conversation = {
   id: string
+  provider: 'chatgpt' | 'gemini'
   account_id: string
   account_name: string
   title: string
@@ -32,12 +33,19 @@ export type Conversation = {
   prompt_visible_tokens: number
   response_visible_tokens: number
   total_visible_tokens: number
+  calendar_span_days?: number
+  active_days?: number
+  session_count?: number
+  estimated_active_seconds?: number
+  longest_gap_seconds?: number
+  topics?: Pick<Topic, 'id' | 'name' | 'color'>[]
 }
 
 export type Account = {
   id: string
   name: string
   browser_profile: string
+  provider: 'chatgpt' | 'gemini'
   enabled: boolean
   conversations?: number
 }
@@ -61,6 +69,7 @@ export type Topic = {
   token_share: number
   prompt_percent: number
   token_percent: number
+  color: string
 }
 
 export type TopicTimeline = {
@@ -69,4 +78,12 @@ export type TopicTimeline = {
   topic: string
   prompt_share: number
   token_share: number
+  topic_color: string
+}
+
+export type DayConversation = Pick<Conversation, 'id' | 'provider' | 'account_id' | 'account_name' | 'title' | 'prompts' | 'prompt_visible_tokens' | 'response_visible_tokens' | 'total_visible_tokens'> & {
+  first_activity: string
+  last_activity: string
+  dominant_topic: string | null
+  topic_color: string | null
 }

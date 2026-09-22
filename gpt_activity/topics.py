@@ -14,6 +14,22 @@ from .config import Settings
 from .db import connect, migrate
 
 
+TOPIC_PALETTE = (
+    "#6F86A6", "#769C8D", "#A58A6D", "#8E7FA6", "#A87579", "#6D9AA3",
+    "#8D966B", "#9A7E91", "#718E7A", "#9B895F", "#7487A0", "#8B8172",
+    "#77949B", "#968197", "#7E9270", "#9A7C70",
+)
+
+
+def _topic_color(slug: str, child: bool = False) -> str:
+    import hashlib
+    color = TOPIC_PALETTE[int(hashlib.sha256(slug.encode()).hexdigest()[:8], 16) % len(TOPIC_PALETTE)]
+    if not child:
+        return color
+    red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
+    return f"#{min(255, red + 18):02X}{min(255, green + 18):02X}{min(255, blue + 18):02X}"
+
+
 class TopicWeight(BaseModel):
     parent_topic: str = Field(min_length=1, max_length=80)
     topic: str = Field(min_length=1, max_length=100)
@@ -58,6 +74,7 @@ class DeepSeekTopicClassifier:
     classifier_name = "deepseek"
 
     def __init__(self, settings: Settings):
+        import hashlib
         import httpx
 
         self.settings = settings
@@ -66,7 +83,9 @@ class DeepSeekTopicClassifier:
         self.model = cfg["model"]
         self.api_key = settings.api_key
         self.timeout = cfg["request_timeout_seconds"]
-        self.classifier_version = f"deepseek:{self.model}:{cfg['classifier_schema_version']}"
+        preferences = json.dumps(cfg.get("preferences", {}), ensure_ascii=False, sort_keys=True)
+        preferences_version = hashlib.sha256(preferences.encode()).hexdigest()[:12]
+        self.classifier_version = f"deepseek:{self.model}:{cfg['classifier_schema_version']}:{preferences_version}"
         if not self.api_key:
             raise ValueError("No topic API key configured. Add it to config.local.json or GPT_ACTIVITY_API_KEY.")
         self.client = httpx.Client(timeout=self.timeout)
@@ -89,6 +108,7 @@ class DeepSeekTopicClassifier:
             "previous_user_prompts": list(request.previous_user_prompts),
             "current_user_prompt": request.prompt,
             "existing_taxonomy": list(request.existing_taxonomy),
+            "user_topic_preferences": self.settings.values["topics"].get("preferences", {}),
         }
         body = {
             "model": self.model,
@@ -139,16 +159,16 @@ def _taxonomy(conn) -> tuple[str, ...]:
 def _topic_id(conn, parent_name: str, topic_name: str, now: str) -> int:
     parent_slug = _slug(parent_name)
     conn.execute(
-        "INSERT INTO topics(parent_id,name,slug,level,created_at) VALUES(NULL,?,?,1,?) "
+        "INSERT INTO topics(parent_id,name,slug,level,color,color_source,created_at) VALUES(NULL,?,?,1,?,'auto',?) "
         "ON CONFLICT(slug) DO UPDATE SET name=excluded.name",
-        (parent_name, parent_slug, now),
+        (parent_name, parent_slug, _topic_color(parent_slug), now),
     )
     parent_id = conn.execute("SELECT id FROM topics WHERE slug=?", (parent_slug,)).fetchone()["id"]
     child_slug = f"{parent_slug}/{_slug(topic_name)}"
     conn.execute(
-        "INSERT INTO topics(parent_id,name,slug,level,created_at) VALUES(?,?,?,2,?) "
+        "INSERT INTO topics(parent_id,name,slug,level,color,color_source,created_at) VALUES(?,?,?,?,?,'auto',?) "
         "ON CONFLICT(slug) DO UPDATE SET name=excluded.name,parent_id=excluded.parent_id",
-        (parent_id, topic_name, child_slug, now),
+        (parent_id, topic_name, child_slug, 2, _topic_color(parent_slug, True), now),
     )
     return conn.execute("SELECT id FROM topics WHERE slug=?", (child_slug,)).fetchone()["id"]
 
@@ -158,17 +178,18 @@ def classify_prompts(settings: Settings, *, reclassify: bool = False, limit: int
     classifier = DeepSeekTopicClassifier(settings)
     max_chars = int(settings.values["topics"]["max_context_chars"])
     with connect(settings.database_path) as conn:
-        where = "" if reclassify else "AND NOT EXISTS (SELECT 1 FROM message_topics mt WHERE mt.message_id=m.id)"
+        where = "" if reclassify else "AND NOT EXISTS (SELECT 1 FROM message_topics mt WHERE mt.message_id=m.id AND mt.classifier_version=?)"
         query = f"""
             SELECT m.id,m.conversation_id,m.sequence_index,m.visible_text,c.title
             FROM messages m JOIN conversations c ON c.id=m.conversation_id
-            WHERE m.is_active_branch=1 AND m.role='user' {where}
+            WHERE m.is_active_branch=1 AND m.role='user' AND m.analyzable=1
+              AND trim(m.visible_text)<>'' {where}
             ORDER BY m.created_at,m.conversation_id,m.sequence_index
         """
-        params: tuple[Any, ...] = ()
+        params: tuple[Any, ...] = () if reclassify else (classifier.classifier_version,)
         if limit:
             query += " LIMIT ?"
-            params = (limit,)
+            params = (*params, limit)
         prompts = [dict(row) for row in conn.execute(query, params).fetchall()]
 
     completed = failed = 0
@@ -193,8 +214,7 @@ def classify_prompts(settings: Settings, *, reclassify: bool = False, limit: int
         try:
             result = classifier.classify(request)
             with connect(settings.database_path) as conn:
-                if reclassify:
-                    conn.execute("DELETE FROM message_topics WHERE message_id=?", (prompt["id"],))
+                conn.execute("DELETE FROM message_topics WHERE message_id=?", (prompt["id"],))
                 for item in result.topics:
                     topic_id = _topic_id(conn, item.parent_topic, item.topic, now)
                     conn.execute(
@@ -259,25 +279,30 @@ def _turn_tokens(conn, message: dict[str, Any]) -> int:
     return (message["visible_tokens"] or 0) + (response or 0)
 
 
-def topic_distribution(db_path, level: int = 1) -> list[dict[str, Any]]:
+def topic_distribution(db_path, level: int = 1, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
     with connect(db_path) as conn:
+        scope = " AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)"
         prompt_rows = [dict(row) for row in conn.execute(
-            "SELECT id,conversation_id,sequence_index,visible_tokens FROM messages "
-            "WHERE is_active_branch=1 AND role='user'"
+            "SELECT m.id,m.conversation_id,m.sequence_index,m.visible_tokens FROM messages m "
+            "JOIN conversations c ON c.id=m.conversation_id WHERE m.is_active_branch=1 AND m.role='user'" + scope,
+            (provider, provider, account_id, account_id),
         )]
         turn_tokens = {row["id"]: _turn_tokens(conn, row) for row in prompt_rows}
         rows = conn.execute(
             """
-            SELECT mt.message_id,mt.weight,t.id,t.name,t.parent_id,p.name parent_name
+            SELECT mt.message_id,mt.weight,t.id,t.name,t.parent_id,t.color,p.name parent_name,p.color parent_color
             FROM message_topics mt JOIN topics t ON t.id=mt.topic_id
             LEFT JOIN topics p ON p.id=t.parent_id
+            JOIN messages m ON m.id=mt.message_id JOIN conversations c ON c.id=m.conversation_id
+            WHERE (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
             """
-        ).fetchall()
+            , (provider, provider, account_id, account_id)).fetchall()
         totals: dict[int, dict[str, Any]] = {}
         for row in rows:
             topic_id = row["parent_id"] if level == 1 else row["id"]
             name = row["parent_name"] if level == 1 else row["name"]
-            item = totals.setdefault(topic_id, {"id": topic_id, "name": name, "prompt_share": 0.0, "token_share": 0.0})
+            color = row["parent_color"] if level == 1 else row["color"]
+            item = totals.setdefault(topic_id, {"id": topic_id, "name": name, "color": color, "prompt_share": 0.0, "token_share": 0.0})
             item["prompt_share"] += row["weight"]
             item["token_share"] += turn_tokens.get(row["message_id"], 0) * row["weight"]
         prompt_total = sum(item["prompt_share"] for item in totals.values()) or 1
@@ -288,19 +313,20 @@ def topic_distribution(db_path, level: int = 1) -> list[dict[str, Any]]:
         return sorted(totals.values(), key=lambda item: item["token_share"], reverse=True)
 
 
-def topic_timeline(db_path, timezone_name: str) -> list[dict[str, Any]]:
+def topic_timeline(db_path, timezone_name: str, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
     from zoneinfo import ZoneInfo
 
     with connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT m.id,m.conversation_id,m.sequence_index,m.visible_tokens,m.created_at,
-                   mt.weight,t.id,t.name,p.id parent_id,p.name parent_name
+                   mt.weight,t.id,t.name,p.id parent_id,p.name parent_name,p.color topic_color
             FROM message_topics mt JOIN messages m ON m.id=mt.message_id
+            JOIN conversations c ON c.id=m.conversation_id
             JOIN topics t ON t.id=mt.topic_id LEFT JOIN topics p ON p.id=t.parent_id
-            WHERE m.created_at IS NOT NULL
+            WHERE m.created_at IS NOT NULL AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
             """
-        ).fetchall()
+            , (provider, provider, account_id, account_id)).fetchall()
         totals: dict[tuple[str, int], dict[str, Any]] = {}
         for raw in rows:
             row = dict(raw)
@@ -308,7 +334,7 @@ def topic_timeline(db_path, timezone_name: str) -> list[dict[str, Any]]:
             key = (month, row["parent_id"])
             item = totals.setdefault(
                 key,
-                {"period": month, "topic_id": row["parent_id"], "topic": row["parent_name"], "prompt_share": 0.0, "token_share": 0.0},
+                {"period": month, "topic_id": row["parent_id"], "topic": row["parent_name"], "topic_color": row["topic_color"], "prompt_share": 0.0, "token_share": 0.0},
             )
             item["prompt_share"] += row["weight"]
             item["token_share"] += _turn_tokens(conn, row) * row["weight"]

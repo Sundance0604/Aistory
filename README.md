@@ -2,7 +2,7 @@
 
 **History is Aistory**
 
-一个本地优先的 ChatGPT 对话同步、归档与活动分析工具。它把对话保存到本机 SQLite，提供中文 Web 仪表盘，并支持多账号串行同步、官方导出文件导入、可见 Token 估算和可选的主题分类。
+一个本地优先的 ChatGPT / Gemini 对话同步、归档与活动分析工具。它把对话保存到本机 SQLite，提供中文 Web 仪表盘，并支持多平台多账号串行同步、ChatGPT 官方导出导入、可见 Token 估算和可选的主题分类。
 
 > 本项目使用 ChatGPT Web 的非公开接口。上游接口可能随时变化；请控制请求频率，仅同步你有权访问的账号和数据。
 
@@ -10,12 +10,15 @@
 
 - 增量同步 ChatGPT 对话，正常模式遇到首个未变化对话后停止继续翻页。
 - 多账号独立登录、独立原始数据目录，按照配置顺序串行同步。
+- Gemini 普通与置顶会话完整游标分页、保守增量读取和逐会话失败恢复。
 - 导入 ChatGPT 官方导出 ZIP、`conversations.json`、单个 `conversation.json` 或对话目录。
 - 正确选择当前活动分支，排除放弃的编辑/重新生成分支。
 - 统计提示数、对话数、活跃天数以及输入、输出、总可见 Token。
-- 日、周、月活动趋势与可点击的年度热力图。
+- 日、周、月完整可滚动趋势、可点击的年度热力图和按日对话下钻。
+- 物化日统计、对话生命周期分析，以及 ChatGPT / Gemini / 全部平台合并筛选。
 - 对话搜索、日期和账号筛选、消息与对话排行榜。
 - 使用 DeepSeek 等 OpenAI 兼容接口进行可选的层级主题分类。
+- 个性化主题词、稳定主题颜色和对话卡片主题摘要。
 - 原始 JSON 原子保存，SQLite 作为统一分析数据源。
 
 ## 数据如何保存
@@ -29,7 +32,9 @@ data/
     └── conversations/
         ├── default/
         │   └── <conversation-id>.json
-        └── work/
+        ├── work/
+            └── <conversation-id>.json
+        └── gemini-personal/
             └── <conversation-id>.json
 ```
 
@@ -63,6 +68,9 @@ cd VisualGPT
 
 python -m pip install -r requirements.txt
 python -m playwright install chromium
+
+# 需要 Gemini 同步时再安装可选依赖
+python -m pip install ".[gemini]"
 
 cd frontend
 npm install
@@ -107,10 +115,26 @@ cp config.example.json config.local.json
     "max_delay_seconds": 16,
     "stop_on_first_unchanged": true
   },
+  "gemini": {
+    "enabled": false,
+    "secure_1psid": "",
+    "secure_1psidts": "",
+    "proxy": "",
+    "page_size": 100,
+    "read_limit": 10000,
+    "recent_refetch_count": 30,
+    "retry_delays_seconds": [1, 3, 10]
+  },
+  "analytics": {
+    "session_gap_minutes": 30,
+    "single_prompt_minutes": 5,
+    "session_tail_minutes": 5
+  },
   "accounts": [
     {
       "id": "default",
       "name": "个人账号",
+      "provider": "chatgpt",
       "browser_profile": "browser_profile",
       "enabled": true
     }
@@ -120,7 +144,13 @@ cp config.example.json config.local.json
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-chat",
     "api_key": "",
-    "max_concurrency": 4
+    "max_concurrency": 4,
+    "preferences": {
+      "keywords": ["机器学习", "写作"],
+      "aliases": {},
+      "weights": {},
+      "blocked_topics": []
+    }
   }
 }
 ```
@@ -132,6 +162,9 @@ cp config.example.json config.local.json
 - `include_files` 默认为 `false`，不会扫描账号的 File Library。
 - `stop_on_first_unchanged` 开启时，普通同步会在更新时间倒序列表中遇到首个未变化对话后停止翻页。
 - `--full-index` 会忽略提前停止规则，执行完整索引核对。
+- Gemini Cookie 可保存在这份本地 JSON 中；环境变量 `GEMINI_1PSID`、`GEMINI_1PSIDTS` 仅作为可选覆盖。
+- 设置 API 会清空 Cookie 和 API 密钥字段后再返回，`config.local.json` 不得提交。
+- 生命周期默认以 30 分钟提示间隔划分会话段；修改时区或口径后会重建派生统计。
 - 修改数据库路径会创建或打开目标数据库，不会自动搬迁旧数据库。
 - 主题 API 密钥也可通过环境变量 `GPT_ACTIVITY_API_KEY` 临时提供。
 - 可通过 `GPT_ACTIVITY_CONFIG` 指定另一份配置文件。
@@ -144,7 +177,7 @@ python -m gpt_activity serve
 
 浏览器访问：<http://127.0.0.1:8765>
 
-仪表盘包括概览、活动、纪录、主题、对话、同步和设置页面。点击活动热力格可查看当天提示数及输入、输出、总可见 Token。
+仪表盘包括概览、活动、生命周期、纪录、主题、对话、同步和设置页面。点击活动柱或日期行可查看当天提示数、Token、平台、账号、主主题及对话明细。平台选择器会同时改变查询范围和页面主题；“全部”是真实合并统计，不只是换色。
 
 ## 首次同步
 
@@ -179,10 +212,21 @@ python -m gpt_activity sync --account personal --account work
 ```powershell
 python -m gpt_activity accounts add personal "个人账号" --profile browser_profiles/personal
 python -m gpt_activity accounts add work "工作账号" --profile browser_profiles/work
+python -m gpt_activity accounts add gemini-personal "Gemini 个人账号" --provider gemini
 python -m gpt_activity accounts list
 ```
 
 每个账号必须使用不同的 `browser_profile`。运行无参数的 `sync` 时，程序会按照 `accounts` 数组中的顺序逐个同步账号，不会并发。
+
+## 配置与同步 Gemini
+
+在“设置 → Gemini 读取”或 `config.local.json` 中填写 `Secure-1PSID` 与 `Secure-1PSIDTS`，再添加 `provider: "gemini"` 的账号。Cookie 会持久保存在本地配置中，不依赖每次启动 Conda 后重新设置环境变量。
+
+```powershell
+python -m gpt_activity sync --account gemini-personal
+```
+
+Gemini 同步会完整分页读取普通与置顶会话并按 ID 去重。用户的纯图片等非文本回合会保留为零 Token、不可分类的附件事件；不会下载或 OCR 媒体。Gemini Web 同样是非公开接口，Cookie 失效后需要重新填写。更多实现口径见 [docs/gemini_analytics_implementation.md](docs/gemini_analytics_implementation.md)。
 
 ## 导入 ChatGPT 官方导出数据
 
@@ -244,6 +288,8 @@ python -m gpt_activity topics reclassify
 
 - `GET /api/summary`：总览统计
 - `GET /api/activity/{daily|weekly|monthly}`：活动时间序列
+- `GET /api/activity/{date}/conversations`：某日对话明细
+- `GET /api/lifecycle`：对话生命周期统计
 - `GET /api/conversations`：对话列表与筛选
 - `POST /api/sync`：启动同步
 - `GET /api/sync/status`：同步状态
@@ -263,6 +309,7 @@ python -m gpt_activity topics reclassify
 - 主题分析是唯一会把提示文本发送给外部模型 API 的功能。
 - 不要提交或分享 `config.local.json`、`browser_profile/`、`browser_profiles/`、`data/` 或任何导出目录。
 - 浏览器资料目录包含登录状态，应视为敏感凭据。
+- Gemini Cookie 与 API 密钥保存在 `config.local.json` 时同样属于敏感凭据；设置 API 只返回是否已配置。
 - ChatGPT Web 接口为非公开接口，使用前请自行评估账号和服务条款风险。
 
 ## 开发
@@ -282,11 +329,11 @@ npm run build
 
 后端使用 FastAPI 与 SQLite，前端使用 React、TypeScript 和 Vite。生产构建后的静态文件由 FastAPI 提供。
 
-## Gemini 扩展计划
+## Gemini 实现与后续扩展
 
-未来接入 Gemini 的架构、认证方式、数据映射、许可证风险与分阶段实施方案见 [docs/gemini_expansion_plan.md](docs/gemini_expansion_plan.md)。
+当前 Gemini 和物化统计的实现口径见 [docs/gemini_analytics_implementation.md](docs/gemini_analytics_implementation.md)。早期架构路线与未来媒体能力见 [docs/gemini_expansion_plan.md](docs/gemini_expansion_plan.md)。
 
-路线图还包括：活动页完整滑动时间窗口、个性化主题词、对话卡片主题标签，以及按 ChatGPT、Gemini、全部平台分别切换黑白、淡蓝白、绿白视觉主题。“全部平台”会实际合并对话、提示、Token、活跃天数、时间序列、主题和排行榜，不只是更换配色。
+活动页完整滑动时间窗口、个性化主题词、对话卡片主题标签，以及 ChatGPT 黑白、Gemini 淡蓝白、全部平台绿白视觉主题均已接入。“全部平台”会实际合并对话、提示、Token、活跃天数、时间序列、主题和排行榜。
 
 ## 旧版导出器
 
@@ -302,4 +349,4 @@ python build_viewer.py
 
 ## 许可证
 
-VisualGPT 仓库采用 GPL-3.0 许可证，参见 [LICENSE](LICENSE)。项目包含源自 MIT 许可 `scrapemychats` 的部分，原始许可文本保存在 [LICENSES/scrapemychats-MIT.txt](LICENSES/scrapemychats-MIT.txt)。第三方归属与调研信息见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 和 [docs/third_party_references.md](docs/third_party_references.md)。
+VisualGPT 发布仓库采用 GPL-3.0 许可证，参见 [LICENSE](LICENSE)。原始 `scrapemychats` 代码的 MIT 许可文本保留在 [LICENSES/scrapemychats-MIT.txt](LICENSES/scrapemychats-MIT.txt)，第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

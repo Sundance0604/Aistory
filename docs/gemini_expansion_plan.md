@@ -1,6 +1,6 @@
-# Gemini 对话同步扩展设计
+# Gemini 对话同步扩展设计（历史路线图）
 
-本文只描述未来方案，不代表当前版本已经支持 Gemini。目标是在不破坏 ChatGPT 同步、导入和分析能力的前提下，让 VisualGPT 可以统一归档多个平台、多个账号的对话。
+本文保留早期路线图和未来媒体能力设想。基础 Gemini 同步、统一统计、生命周期、主题颜色与平台合并视图现已实现；当前准确行为请阅读 [gemini_analytics_implementation.md](gemini_analytics_implementation.md)。
 
 ## 1. 调研结论
 
@@ -14,7 +14,7 @@
 - 输出可区分普通文本、思考内容、图片、视频和音频等类型；
 - Python 要求为 3.11 或更高版本。
 
-该项目使用 Gemini Web 的逆向接口，并非 Google 官方 API。认证通常依赖 `__Secure-1PSID` 和 `__Secure-1PSIDTS` Cookie；Chromium 的设备绑定会话凭据可能导致 Cookie 生命周期较短。它采用 **AGPL-3.0** 许可证，而 VisualGPT 当前采用 MIT。因此不能在未评估许可证影响的情况下直接复制或内嵌其源代码。
+该项目使用 Gemini Web 的逆向接口，并非 Google 官方 API。认证通常依赖 `__Secure-1PSID` 和 `__Secure-1PSIDTS` Cookie；Chromium 的设备绑定会话凭据可能导致 Cookie 生命周期较短。它采用 **AGPL-3.0** 许可证；VisualGPT 发布仓库采用 GPL-3.0，并将 `gemini-webapi` 保持为可选外部依赖，不复制或内嵌其源码。
 
 ## 2. 设计原则
 
@@ -269,7 +269,7 @@ Gemini `read_chat` 返回的回合从新到旧，写入数据库前必须反转�
 
 ## 14. 许可证与供应链方案
 
-参考仓库采用 AGPL-3.0，而本项目采用 MIT。实施前需要选择：
+参考仓库采用 AGPL-3.0。VisualGPT 发布仓库采用 GPL-3.0，原始 `scrapemychats` MIT 许可文本保留在 `LICENSES/`；Gemini 连接器仍以可选外部依赖方式安装：
 
 ### 方案 A：可选外部依赖
 

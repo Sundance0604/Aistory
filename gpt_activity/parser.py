@@ -130,6 +130,7 @@ class NormalizedMessage:
     sequence_index: int | None
     is_active_branch: bool
     has_attachment: bool
+    analyzable: bool
     raw_metadata_json: str
 
 
@@ -188,6 +189,7 @@ def normalize_conversation(data: dict[str, Any]) -> NormalizedConversation:
                 isinstance(part, dict) and bool(part.get("asset_pointer"))
                 for part in content.get("parts") or []
             ),
+            analyzable=bool(text.strip()),
             raw_metadata_json=json.dumps(metadata, ensure_ascii=False, separators=(",", ":")),
         )
         messages.append(normalized)
