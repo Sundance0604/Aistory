@@ -47,6 +47,19 @@ def plan_sync(local_rows: dict[str, dict[str, Any]], remote: list[IndexItem], fo
     return SyncPlan(new, changed, unchanged)
 
 
+def ordered_fetch_queue(remote: list[IndexItem], plan: SyncPlan) -> list[IndexItem]:
+    """Keep the provider's newest-first order instead of grouping by action."""
+    fetch_ids = {item.id for item in (*plan.new, *plan.changed)}
+    return [item for item in remote if item.id in fetch_ids]
+
+
+def _index_stream(item: IndexItem) -> str:
+    # The main conversation list and every project are independently ordered
+    # newest-first. An unchanged item in one stream must not hide another
+    # project's newer conversations.
+    return item.project_id or "__main__"
+
+
 class ChatGPTWebSource:
     """Small replaceable adapter around the proven Playwright login/session flow."""
 
@@ -364,15 +377,29 @@ def _sync_account(
                 updated_conversations=len(plan.changed),
                 unchanged_conversations=len(plan.unchanged),
             )
-            queue = plan.new + plan.changed
+            queue = ordered_fetch_queue(remote, plan)
             print(
                 f"[SYNC] visible={len(remote)} new={len(plan.new)} changed={len(plan.changed)} "
                 f"unchanged={len(plan.unchanged)}",
                 flush=True,
             )
+            stop_fetch_on_unchanged = bool(
+                settings.values["chatgpt"].get("stop_on_first_unchanged", True)
+                and not full_index
+                and not force_fetch
+            )
+            stopped_streams: set[str] = set()
+            made_request = False
             for index, item in enumerate(queue, 1):
+                stream = _index_stream(item)
+                if stream in stopped_streams:
+                    continue
+                if made_request:
+                    cfg = settings.values["chatgpt"]
+                    time.sleep(random.uniform(cfg["min_delay_seconds"], cfg["max_delay_seconds"]))
                 try:
                     data = source.fetch_conversation(item)
+                    made_request = True
                     state, prompts = upsert_conversation(
                         settings,
                         data,
@@ -384,12 +411,22 @@ def _sync_account(
                     stats["fetched_conversations"] += 1
                     stats["new_messages"] += prompts
                     print(f"[FETCH {index}/{len(queue)}] {item.title}: {state}", flush=True)
+                    if state == "unchanged" and stop_fetch_on_unchanged:
+                        stopped_streams.add(stream)
+                        skipped = sum(
+                            1 for remaining in queue[index:]
+                            if _index_stream(remaining) == stream
+                        )
+                        stream_name = "main" if stream == "__main__" else f"project:{stream}"
+                        print(
+                            f"[SYNC] first content-unchanged conversation in {stream_name}; "
+                            f"skipping {skipped} older fetch candidate(s)",
+                            flush=True,
+                        )
                 except Exception as exc:
+                    made_request = True
                     stats["failed_conversations"] += 1
                     print(f"[FETCH {index}/{len(queue)}] {item.title}: failed ({type(exc).__name__})", flush=True)
-                cfg = settings.values["chatgpt"]
-                if index < len(queue):
-                    time.sleep(random.uniform(cfg["min_delay_seconds"], cfg["max_delay_seconds"]))
             if include_files:
                 source.include_files()
     except Exception as exc:

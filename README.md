@@ -161,7 +161,7 @@ cp config.example.json config.local.json
 - 相对路径以 `config.local.json` 所在目录为基准。
 - `browser_channel` 可设置为 `chrome` 或 `msedge`。
 - `include_files` 默认为 `false`，不会扫描账号的 File Library。
-- `stop_on_first_unchanged` 开启时，普通同步会在更新时间倒序列表中遇到首个未变化对话后停止翻页。
+- `stop_on_first_unchanged` 开启时，普通同步会保留远端更新时间倒序顺序：索引阶段遇到首个元数据未变化的对话后停止翻页；若索引时间戳误报为更新，详情抓取在内容哈希首次判定为 `unchanged` 后也会跳过该索引流中更旧的候选。主列表与每个项目列表独立判断，避免遗漏其他项目的新对话。
 - `--full-index` 会忽略提前停止规则，执行完整索引核对。
 - Gemini Cookie 可保存在这份本地 JSON 中；环境变量 `GEMINI_1PSID`、`GEMINI_1PSIDTS` 仅作为可选覆盖。
 - 设置 API 会清空 Cookie 和 API 密钥字段后再返回，`config.local.json` 不得提交。
