@@ -176,6 +176,12 @@ cp config.example.json config.local.json
 python -m gpt_activity serve
 ```
 
+### Windows 一键启动
+
+安装完成后可以直接双击项目根目录的 `start_aistory.cmd`。启动器会自动寻找当前 Windows 用户目录下 Conda 的 `pavane` 环境，并从 `config.local.json` 读取主机与端口；服务就绪后自动打开网页。如果服务已经运行，它只会打开页面，不会重复创建服务进程。
+
+启动文件只需保留在项目目录中。如果 Conda 环境不在常见目录，可将环境变量 `AISTORY_PYTHON` 设置为对应的 `python.exe` 完整路径。
+
 浏览器访问：<http://127.0.0.1:8765>
 
 仪表盘包括概览、活动、时长、生命周期、纪录、主题、对话、同步和设置页面。点击活动柱、日期行或热力图日期块可查看当天提示数、Token、平台、账号、主主题及对话明细。平台选择器会同时改变查询范围和页面主题；“全部”是真实合并统计，不只是换色。
