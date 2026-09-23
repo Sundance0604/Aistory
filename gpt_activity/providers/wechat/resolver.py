@@ -41,10 +41,11 @@ def load_contacts(db) -> dict[str, dict[str, str]]:
     return contacts
 
 
-def _message_tables(db) -> set[str]:
+def _message_tables(db, message_connections=None) -> set[str]:
     tables: set[str] = set()
     for rel in db._message_dbs():
-        conn = db._open(rel)
+        key = str(rel)
+        conn = message_connections[key] if message_connections is not None else db._open(rel)
         try:
             conn.execute("PRAGMA query_only=ON")
             tables.update(
@@ -53,7 +54,8 @@ def _message_tables(db) -> set[str]:
                 )
             )
         finally:
-            conn.close()
+            if message_connections is None:
+                conn.close()
     return tables
 
 
@@ -62,7 +64,7 @@ def _display(contact: dict[str, str] | None, fallback: str) -> str:
     return contact.get("remark") or contact.get("nick_name") or fallback
 
 
-def discover_sources(db, *, self_wxid: str, sync_private: bool, sync_groups: bool) -> tuple[list[WeChatSource], dict[str, str]]:
+def discover_sources(db, *, self_wxid: str, sync_private: bool, sync_groups: bool, message_connections=None) -> tuple[list[WeChatSource], dict[str, str]]:
     contacts = load_contacts(db)
     names = {wxid: _display(contact, wxid) for wxid, contact in contacts.items()}
     names[self_wxid] = "我"
@@ -78,7 +80,7 @@ def discover_sources(db, *, self_wxid: str, sync_private: bool, sync_groups: boo
         if wxid.endswith("@chatroom"):
             groups.setdefault(wxid, _display(contact, wxid))
 
-    tables = _message_tables(db)
+    tables = _message_tables(db, message_connections)
     sources: list[WeChatSource] = []
     if sync_groups:
         for wxid, title in groups.items():

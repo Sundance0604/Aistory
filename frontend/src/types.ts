@@ -59,6 +59,7 @@ export type Account = {
   name: string
   browser_profile?: string
   wechat_data_dir?: string
+  wechat_account?: string
   alias?: string
   external_user_id?: string
   display_name?: string

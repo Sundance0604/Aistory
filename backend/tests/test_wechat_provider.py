@@ -4,9 +4,10 @@ import sqlite3
 import pytest
 
 from gpt_activity.analytics import conversation_rankings, refresh_analytics, summary
-from gpt_activity.config import load_settings
+from gpt_activity.config import load_settings, upsert_account
 from gpt_activity.db import connect
 from gpt_activity.providers.wechat.common import md5_username
+from gpt_activity.providers.wechat.db import discover_wechat_accounts
 from gpt_activity.providers.wechat.sync import run_wechat_sync
 from gpt_activity.topics import classify_prompts
 from gpt_activity.usage_time import _events
@@ -108,7 +109,7 @@ def test_private_group_incremental_and_sender_display(tmp_path, monkeypatch):
     fake.add_private(1, 100)
     fake.add_group()
     settings = settings_for(tmp_path, [account("wechat_main", source_dir)])
-    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: fake)
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path, _account=None: fake)
 
     first = run_wechat_sync(settings, settings.accounts[0])
     assert first["messages"] == 101
@@ -145,7 +146,7 @@ def test_same_named_accounts_and_message_ids_do_not_collide(tmp_path, monkeypatc
     settings = settings_for(tmp_path, accounts)
     monkeypatch.setattr(
         "gpt_activity.providers.wechat.sync.open_wechat",
-        lambda path: main if str(path) == str(main_dir) else alt,
+        lambda path, _account=None: main if str(path) == str(main_dir) else alt,
     )
     for item in settings.accounts:
         run_wechat_sync(settings, item)
@@ -161,10 +162,10 @@ def test_wrong_data_directory_is_rejected(tmp_path, monkeypatch):
     source_dir.mkdir()
     original = FakeWeChatDB(source_dir, "wxid_A")
     settings = settings_for(tmp_path, [account("wechat_main", source_dir)])
-    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: original)
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path, _account=None: original)
     run_wechat_sync(settings, settings.accounts[0])
     wrong = FakeWeChatDB(source_dir, "wxid_B")
-    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: wrong)
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path, _account=None: wrong)
     with pytest.raises(RuntimeError, match="另一个微信账号"):
         run_wechat_sync(settings, settings.accounts[0])
 
@@ -175,7 +176,7 @@ def test_topics_skip_wechat_and_inbound_does_not_create_usage_event(tmp_path, mo
     fake = FakeWeChatDB(source_dir)
     fake.add_private(1, 3)
     settings = settings_for(tmp_path, [account("wechat_main", source_dir)])
-    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: fake)
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path, _account=None: fake)
     run_wechat_sync(settings, settings.accounts[0])
 
     calls = []
@@ -207,7 +208,7 @@ def test_all_ai_scope_excludes_wechat(tmp_path, monkeypatch):
     fake.add_private(1, 2)
     fake.add_private(3, 1, outbound=True)
     settings = settings_for(tmp_path, [account("wechat_main", source_dir)])
-    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: fake)
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path, _account=None: fake)
     run_wechat_sync(settings, settings.accounts[0])
     refresh_analytics(settings.database_path, settings.timezone, settings.values["analytics"])
 
@@ -217,3 +218,45 @@ def test_all_ai_scope_excludes_wechat(tmp_path, monkeypatch):
     events = _events(settings.database_path, "wechat")
     assert len(events) == 1
     assert events[0]["provider"] == "wechat"
+
+
+def test_wechat_discovery_uses_process_installation_fallback(tmp_path, monkeypatch):
+    root = tmp_path / "xwechat_files"
+    account_dir = root / "wxid_test_abcd"
+    (account_dir / "db_storage").mkdir(parents=True)
+    monkeypatch.setattr(
+        "gpt_activity.providers.wechat.db._wechat_api",
+        lambda: (object, lambda: None, lambda detected: [{
+            "account": "wxid_test_abcd", "wxid": "wxid_test",
+            "path": str(account_dir), "last_activity": 123,
+        }]),
+    )
+    monkeypatch.setattr("gpt_activity.providers.wechat.db._process_data_root", lambda: str(root))
+
+    result = discover_wechat_accounts()
+    assert result["detected_root"] == str(root)
+    assert result["accounts"][0]["account"] == "wxid_test_abcd"
+    assert result["accounts"][0]["suggested_id"].startswith("wechat_")
+
+
+def test_discovered_account_selector_is_saved(tmp_path, monkeypatch):
+    source_dir = tmp_path / "xwechat_files"
+    source_dir.mkdir()
+    fake = FakeWeChatDB(source_dir, "wxid_A")
+    settings = settings_for(tmp_path, [{
+        "id": "default", "name": "Default", "provider": "chatgpt", "enabled": True,
+    }])
+    monkeypatch.setattr(
+        "gpt_activity.providers.wechat.db.open_wechat",
+        lambda path, selected=None: fake,
+    )
+
+    saved = upsert_account(settings, {
+        "id": "wechat_main", "provider": "wechat", "name": "", "alias": "主号",
+        "wechat_data_dir": str(source_dir), "wechat_account": "wxid_A_abcd", "enabled": True,
+    })
+    configured = saved.account("wechat_main")
+    assert configured["name"] == "Lau"
+    assert configured["alias"] == "主号"
+    assert configured["wechat_data_dir"] == str(source_dir)
+    assert configured["wechat_account"] == "wxid_A_abcd"

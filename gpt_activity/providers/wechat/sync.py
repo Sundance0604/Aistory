@@ -45,7 +45,11 @@ def _account_identity(db) -> tuple[str, str, dict[str, Any]]:
     return wxid, name, info
 
 
-def _sync_source(settings, db, account: dict[str, Any], source: WeChatSource, names: dict[str, str], self_wxid: str, *, force_fetch: bool) -> dict[str, Any]:
+def _sync_source(
+    settings, db, account: dict[str, Any], source: WeChatSource, names: dict[str, str],
+    self_wxid: str, message_connections: dict[str, Any], self_sender_ids: dict[str, set[str]],
+    *, force_fetch: bool,
+) -> dict[str, Any]:
     account_id = str(account["id"])
     checkpoint = {"source_id": source.remote_id, "shards": {}} if force_fetch else _load_checkpoint(
         settings.database_path, account_id, source.remote_id
@@ -64,71 +68,63 @@ def _sync_source(settings, db, account: dict[str, Any], source: WeChatSource, na
 
     table = "Msg_" + md5_username(source.remote_id)
     normalized: list[dict[str, Any]] = []
-    for rel in db._message_dbs():
+    for rel, conn in message_connections.items():
         shard = str(rel)
-        conn = db._open(rel)
-        try:
-            conn.execute("PRAGMA query_only=ON")
-            if not table_exists(conn, table):
-                continue
-            previous = checkpoint.setdefault("shards", {}).get(shard)
-            rows, mode = read_message_rows(conn, table, previous)
-            votes: dict[str, Counter] = defaultdict(Counter)
-            if previous:
-                for sender_id, counts in (previous.get("sender_votes") or {}).items():
-                    votes[sender_id].update(counts)
-            evidence_rows = rows
-            if previous is None:
-                evidence_rows, _ = read_message_rows(conn, table)
-            for row in evidence_rows:
-                sender_id = normalize_sender_id(row.get("real_sender_id"))
-                sender = explicit_sender_from_row(row, known_ids, source.remote_id)
-                if sender_id not in {"", "0", "None"} and sender:
-                    votes[sender_id][sender] += 1
-            sender_map = {
-                sender_id: ranking[0][0]
-                for sender_id, counts in votes.items()
-                if (ranking := counts.most_common()) and (len(ranking) == 1 or ranking[0][1] > ranking[1][1])
-            }
-            self_sender_ids = filehelper_self_ids(conn)
-            for sender_id in self_sender_ids:
-                sender_map.setdefault(sender_id, self_wxid)
+        if not table_exists(conn, table):
+            continue
+        previous = checkpoint.setdefault("shards", {}).get(shard)
+        rows, mode = read_message_rows(conn, table, previous)
+        votes: dict[str, Counter] = defaultdict(Counter)
+        if previous:
+            for sender_id, counts in (previous.get("sender_votes") or {}).items():
+                votes[sender_id].update(counts)
+        for row in rows:
+            sender_id = normalize_sender_id(row.get("real_sender_id"))
+            sender = explicit_sender_from_row(row, known_ids, source.remote_id)
+            if sender_id not in {"", "0", "None"} and sender:
+                votes[sender_id][sender] += 1
+        sender_map = {
+            sender_id: ranking[0][0]
+            for sender_id, counts in votes.items()
+            if (ranking := counts.most_common()) and (len(ranking) == 1 or ranking[0][1] > ranking[1][1])
+        }
+        shard_self_sender_ids = self_sender_ids.get(shard, set())
+        for sender_id in shard_self_sender_ids:
+            sender_map.setdefault(sender_id, self_wxid)
 
-            for row in rows:
-                sender_id = normalize_sender_id(row.get("real_sender_id"))
-                sender = explicit_sender_from_row(row, known_ids, source.remote_id) or sender_map.get(sender_id)
-                base_type = get_base_type(row.get("local_type"))
-                if base_type == 10000:
-                    direction, role, sender, sender_name = "system", "system", "", "系统"
-                else:
-                    if not sender and source.conversation_type == "private":
-                        sender = self_wxid if sender_id in self_sender_ids else source.remote_id
-                    direction = "outbound" if sender == self_wxid else "inbound"
-                    role = "user" if direction == "outbound" else "assistant"
-                    sender_name = "我" if direction == "outbound" else names.get(sender or "", sender or f"未识别成员#{sender_id}")
-                text = clean_content(row, known_ids, source.remote_id)
-                created_at = _timestamp(row.get("create_time"))
-                local_id = int(row["local_id"])
-                sort_seq = int(row.get("sort_seq") or 0)
-                normalized.append({
-                    "id": stable_id("wechat", account_id, source.remote_id, shard, local_id),
-                    "role": role, "direction": direction, "sender_external_id": sender or None,
-                    "sender_display_name": sender_name, "created_at": created_at,
-                    "visible_text": text, "visible_tokens": count_visible_tokens(text),
-                    "content_type": "wechat_message", "raw_type": str(row.get("local_type")),
-                    "sequence_index": sort_seq or int(datetime.fromisoformat(created_at).timestamp() * 1000),
-                    "metadata": {"shard": shard, "sort_seq": sort_seq, "local_id": local_id, "sender_id": sender_id, "sender_wxid": sender or ""},
-                })
-            if rows:
-                last = rows[-1]
-                checkpoint["shards"][shard] = {
-                    "last_sort_seq": int(last.get("sort_seq") or 0),
-                    "last_local_id": int(last["local_id"]),
-                    "cursor_mode": mode,
-                    "sender_votes": {sender_id: dict(counts) for sender_id, counts in votes.items()},
-                }
-        finally:
-            conn.close()
+        for row in rows:
+            sender_id = normalize_sender_id(row.get("real_sender_id"))
+            sender = explicit_sender_from_row(row, known_ids, source.remote_id) or sender_map.get(sender_id)
+            base_type = get_base_type(row.get("local_type"))
+            if base_type == 10000:
+                direction, role, sender, sender_name = "system", "system", "", "系统"
+            else:
+                if not sender and source.conversation_type == "private":
+                    sender = self_wxid if sender_id in shard_self_sender_ids else source.remote_id
+                direction = "outbound" if sender == self_wxid else "inbound"
+                role = "user" if direction == "outbound" else "assistant"
+                sender_name = "我" if direction == "outbound" else names.get(sender or "", sender or f"未识别成员#{sender_id}")
+            text = clean_content(row, known_ids, source.remote_id)
+            created_at = _timestamp(row.get("create_time"))
+            local_id = int(row["local_id"])
+            sort_seq = int(row.get("sort_seq") or 0)
+            normalized.append({
+                "id": stable_id("wechat", account_id, source.remote_id, shard, local_id),
+                "role": role, "direction": direction, "sender_external_id": sender or None,
+                "sender_display_name": sender_name, "created_at": created_at,
+                "visible_text": text, "visible_tokens": count_visible_tokens(text),
+                "content_type": "wechat_message", "raw_type": str(row.get("local_type")),
+                "sequence_index": sort_seq or int(datetime.fromisoformat(created_at).timestamp() * 1000),
+                "metadata": {"shard": shard, "sort_seq": sort_seq, "local_id": local_id, "sender_id": sender_id, "sender_wxid": sender or ""},
+            })
+        if rows:
+            last = rows[-1]
+            checkpoint["shards"][shard] = {
+                "last_sort_seq": int(last.get("sort_seq") or 0),
+                "last_local_id": int(last["local_id"]),
+                "cursor_mode": mode,
+                "sender_votes": {sender_id: dict(counts) for sender_id, counts in votes.items()},
+            }
 
     normalized.sort(key=lambda item: (item["created_at"], item["sequence_index"], item["id"]))
     now = datetime.now(timezone.utc).isoformat()
@@ -194,7 +190,8 @@ def run_wechat_sync(settings, account: dict[str, Any], *, force_fetch: bool = Fa
     migrate(settings.database_path)
     account_id = str(account["id"])
     data_dir = settings.wechat_data_dir_for(account)
-    db = open_wechat(data_dir)
+    selected_account = settings.wechat_account_for(account)
+    db = open_wechat(data_dir, selected_account)
     self_wxid, detected_name, self_info = _account_identity(db)
     with connect(settings.database_path) as conn:
         row = conn.execute("SELECT external_user_id FROM accounts WHERE id=?", (account_id,)).fetchone()
@@ -205,22 +202,40 @@ def run_wechat_sync(settings, account: dict[str, Any], *, force_fetch: bool = Fa
         settings.database_path, account_id, account_name, "wechat",
         alias=str(account.get("alias") or "") or None,
         external_user_id=self_wxid,
-        metadata_json=json.dumps({"wechat_data_dir": str(data_dir), "self_info": self_info}, ensure_ascii=False, default=str),
+        metadata_json=json.dumps({
+            "wechat_data_dir": str(getattr(db, "db_dir", data_dir) or ""),
+            "wechat_account": str(getattr(db, "account", selected_account) or ""),
+            "self_info": self_info,
+        }, ensure_ascii=False, default=str),
     )
     provider_options = settings.values.get("wechat", {})
-    sources, names = discover_sources(
-        db, self_wxid=self_wxid,
-        sync_private=bool(provider_options.get("sync_private", True)),
-        sync_groups=bool(provider_options.get("sync_groups", True)),
-    )
-    totals = {"discovered": len(sources), "new": 0, "updated": 0, "unchanged": 0, "failed": 0, "messages": 0}
-    failures: list[dict[str, str]] = []
-    for source in sources:
-        try:
-            result = _sync_source(settings, db, account, source, names, self_wxid, force_fetch=force_fetch)
-            for key in ("new", "updated", "unchanged", "messages"):
-                totals[key] += result[key]
-        except Exception as exc:
-            totals["failed"] += 1
-            failures.append({"remote_id": source.remote_id, "title": source.title, "error": f"{type(exc).__name__}: {exc}"})
+    message_connections: dict[str, Any] = {}
+    try:
+        for rel in db._message_dbs():
+            conn = db._open(rel)
+            conn.execute("PRAGMA query_only=ON")
+            message_connections[str(rel)] = conn
+        sources, names = discover_sources(
+            db, self_wxid=self_wxid,
+            sync_private=bool(provider_options.get("sync_private", True)),
+            sync_groups=bool(provider_options.get("sync_groups", True)),
+            message_connections=message_connections,
+        )
+        self_sender_ids = {rel: filehelper_self_ids(conn) for rel, conn in message_connections.items()}
+        totals = {"discovered": len(sources), "new": 0, "updated": 0, "unchanged": 0, "failed": 0, "messages": 0}
+        failures: list[dict[str, str]] = []
+        for source in sources:
+            try:
+                result = _sync_source(
+                    settings, db, account, source, names, self_wxid,
+                    message_connections, self_sender_ids, force_fetch=force_fetch,
+                )
+                for key in ("new", "updated", "unchanged", "messages"):
+                    totals[key] += result[key]
+            except Exception as exc:
+                totals["failed"] += 1
+                failures.append({"remote_id": source.remote_id, "title": source.title, "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        for conn in message_connections.values():
+            conn.close()
     return {**totals, "self_wxid": self_wxid, "failures": failures}

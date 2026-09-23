@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Database, LoaderCircle, RefreshCw } from 'lucide-react'
 import { api, compact, dateLabel } from '../api'
 import type { Account } from '../types'
 
-export function SyncPage() {
+export function SyncPage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [state, setState] = useState<any>({ job: { status: 'idle' }, last_sync: { status: 'never' } })
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selected, setSelected] = useState<string[]>([])
@@ -19,6 +19,7 @@ export function SyncPage() {
   const result = state.job?.kind === 'sync' && state.job?.result ? state.job.result : last
   const failures = (result.accounts || []).filter((item: any) => item.status === 'failed' || item.error)
   const failed = result.status === 'failed'
+  const hasWechat = accounts.some((account) => account.provider === 'wechat')
   return (
     <div className="page-stack narrow">
       <header className="page-header"><div><span className="eyebrow">增量更新</span><h1>同步</h1></div><p>统一同步 ChatGPT、Gemini 与本机微信历史。</p></header>
@@ -29,6 +30,7 @@ export function SyncPage() {
         <div className="account-checks">{accounts.map((account) => <label key={account.id}><input type="checkbox" checked={selected.includes(account.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, account.id] : selected.filter((id) => id !== account.id))} />{account.display_name || account.name}<small>{account.provider === 'wechat' ? `WeChat${account.external_user_id ? ` · …${account.external_user_id.slice(-4)}` : ''} · ${account.conversations || 0} 个聊天` : `${account.provider === 'gemini' ? 'Gemini' : 'ChatGPT'} · ${account.conversations || 0} 个对话`}</small></label>)}</div>
         <div className="button-row"><button className="primary" disabled={active || !selected.length} onClick={() => start(false)}>依次同步所选账号</button><button disabled={active || !selected.length} onClick={() => start(true)}>完整索引核对</button></div>
       </section>
+      {!hasWechat && <section className="panel form-panel wechat-setup"><div className="wechat-title"><Database size={21}/><div><span className="eyebrow">WeChat 尚未连接</span><h2>导入本机微信历史</h2></div></div><p className="notice">保持桌面微信登录，在设置页自动查找本机账号并添加；之后微信账号会出现在上方同步列表。</p><div className="button-row"><button className="primary" onClick={onOpenSettings}>自动查找微信数据</button></div></section>}
       <section className="panel form-panel">
         <h2>导入 ChatGPT 导出数据</h2>
         <p className="notice">支持官方导出的 ZIP 或 <code>conversations.json</code>，也支持现有的逐对话 <code>conversation.json</code> 目录。</p>

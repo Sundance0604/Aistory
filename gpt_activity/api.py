@@ -40,6 +40,7 @@ from .usage_time import (
     usage_summary,
 )
 from .providers import providers
+from .providers.wechat.db import discover_wechat_accounts
 
 
 JOB_LOCK = threading.Lock()
@@ -341,6 +342,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "conversations": counts.get((provider, account["id"]), {}).get("conversations", 0),
             })
         return result
+
+    @app.get("/api/wechat/discover")
+    def discover_wechat(data_dir: str = ""):
+        try:
+            return discover_wechat_accounts(data_dir or None)
+        except Exception as exc:
+            return {
+                "available": False,
+                "detected_root": None,
+                "accounts": [],
+                "message": f"{type(exc).__name__}: {exc}",
+            }
 
     @app.post("/api/accounts")
     def save_account(body: dict[str, Any]):

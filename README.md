@@ -17,6 +17,7 @@
 - 统计提示数、对话数、活跃天数以及输入、输出、总可见 Token。
 - 日、周、月完整可滚动趋势、可点击的年度热力图和按日对话下钻。
 - 物化日统计、对话生命周期分析，以及 ChatGPT / Gemini / 微信 / 全部 AI 筛选；“全部 AI”仅合并 ChatGPT 与 Gemini，不包含微信。
+- 自动发现已登录的微信 4.x 本地账号与自定义数据目录，并以只读方式增量导入私聊和群聊。
 - 全局使用时长推断：交互 gap 分布、Token 描述性关联、gap-only GMM/HMM、显式边界、异常诊断和模型分歧。
 - 对话搜索、日期和账号筛选、消息与对话排行榜。
 - 使用 DeepSeek 等 OpenAI 兼容接口进行可选的层级主题分类。
@@ -154,7 +155,8 @@ cp config.example.json config.local.json
       "name": "Lau",
       "alias": "主号",
       "provider": "wechat",
-      "wechat_data_dir": "D:/wechat/account-main",
+      "wechat_data_dir": "D:/path/to/xwechat_files",
+      "wechat_account": "wxid_example_abcd",
       "enabled": true
     }
   ],
@@ -182,7 +184,7 @@ cp config.example.json config.local.json
 - `stop_on_first_unchanged` 开启时，普通同步会保留远端更新时间倒序顺序：索引阶段遇到首个元数据未变化的对话后停止翻页；若索引时间戳误报为更新，详情抓取在内容哈希首次判定为 `unchanged` 后也会跳过该索引流中更旧的候选。主列表与每个项目列表独立判断，避免遗漏其他项目的新对话。
 - `--full-index` 会忽略提前停止规则，执行完整索引核对。
 - Gemini Cookie 可保存在这份本地 JSON 中；环境变量 `GEMINI_1PSID`、`GEMINI_1PSIDTS` 仅作为可选覆盖。
-- WeChat 的 `wechat_data_dir` 是账号级配置；同步首次读取并绑定 self wxid，之后路径若指向另一账号会拒绝同步。
+- WeChat 的 `wechat_data_dir` 保存 `xwechat_files` 根目录，`wechat_account` 保存其中的具体账号目录名；设置页会优先自动发现。同步首次读取并绑定 self wxid，之后路径若指向另一账号会拒绝同步。
 - 设置 API 会清空 Cookie 和 API 密钥字段后再返回，`config.local.json` 不得提交。
 - 生命周期默认以 30 分钟提示间隔划分会话段；修改时区或口径后会重建派生统计。
 - 修改数据库路径会创建或打开目标数据库，不会自动搬迁旧数据库。
@@ -258,7 +260,7 @@ Gemini 同步会完整分页读取普通与置顶会话并按 ID 去重。用户
 
 ## 配置与同步 WeChat
 
-先安装 `.[wechat]` 可选依赖，再在“设置 → 账号与 Provider”添加 `provider: "wechat"` 的账号、别名和本机数据库目录。保存只执行目录及账号身份验证，不会自动读取完整历史；随后在统一“同步”页选择账号即可全量或增量同步。
+安装依赖后，在“设置 → 自动发现微信历史”保持桌面微信登录并点击自动查找。Aistory 会先使用 `wechatauto` 的配置/注册表探测，再从正在运行的微信安装位置查找自定义 `xwechat_files`；发现多个账号时可分别设置本地别名并一键添加。添加只执行账号身份验证，不会自动读取完整历史；随后在统一“同步”页选择账号即可全量或增量同步。
 
 WeChat reader 只打开现有数据库读取数据，不执行 `UPDATE`、`DELETE` 或 `ALTER`。私聊通过 `contact.db` 联系人与实际存在的 `Msg_<md5(wxid)>` 消息表交集发现，群聊继续使用 EasyInternship 已验证的正文前缀、XML、压缩字段、sender vote 和 filehelper 推断。公众号不在 V1 范围内。微信消息不会进入 Topics 分类；Usage Time 只把本人发送消息作为强活动事件，收到消息只作为上下文。
 

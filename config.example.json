@@ -54,6 +54,15 @@
       "provider": "chatgpt",
       "browser_profile": "browser_profile",
       "enabled": true
+    },
+    {
+      "id": "wechat_main",
+      "name": "Lau",
+      "alias": "主号",
+      "provider": "wechat",
+      "wechat_data_dir": "D:/path/to/xwechat_files",
+      "wechat_account": "wxid_example_abcd",
+      "enabled": false
     }
   ],
   "topics": {

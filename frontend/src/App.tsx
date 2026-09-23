@@ -57,7 +57,7 @@ export default function App() {
     : page === 'history' ? <History provider={provider} onConversation={openConversation} />
     : page === 'topics' ? <Topics provider={provider} job={job} onJobChange={setJob} onCancel={cancelTopics} />
     : page === 'conversations' ? <Conversations provider={provider} onConversation={openConversation} />
-    : page === 'sync' ? <SyncPage /> : <Settings />
+    : page === 'sync' ? <SyncPage onOpenSettings={() => setPage('settings')} /> : <Settings />
   return (
     <div className={`app-shell theme-${provider || 'all'}`}>
       <aside className="sidebar">
