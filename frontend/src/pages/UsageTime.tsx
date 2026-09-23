@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, compact, dateLabel, number } from '../api'
+import { api, compact, dateLabel, number, scopeQuery } from '../api'
 
 type Candidate = { model_family: string; component_or_state_count: number; feature_set: string; log_likelihood: number; aic: number; bic: number; selected_by_aic: number; selected_by_bic: number }
 type Boundary = { gap_index:number; from_timestamp:string; to_timestamp:string; gap_seconds:number; gmm_boundary_prob:number; hmm_long_gap_prob:number; gmm_boundary:number; hmm_boundary:number; disagreement:number }
@@ -54,13 +54,13 @@ function ModelDiagnostics({ name, model }: { name:string; model:any }) {
   return <div className="diagnostic-card"><h3>{name}</h3><dl><dt>边界 / 比例</dt><dd>{boundary.boundaries ?? '—'} / {boundary.boundary_rate == null?'—':`${(boundary.boundary_rate*100).toFixed(1)}%`}</dd><dt>Session</dt><dd>{boundary.sessions ?? '—'}</dd><dt>Session 内 gap 中位数</dt><dd>{shortDuration(boundary.median_within_gap_seconds)}</dd><dt>Session 内 gap P90 / 最大</dt><dd>{shortDuration(boundary.p90_within_gap_seconds)} / {shortDuration(boundary.max_within_gap_seconds)}</dd><dt>边界 gap 中位数 / 最小</dt><dd>{shortDuration(boundary.median_break_gap_seconds)} / {shortDuration(boundary.minimum_break_gap_seconds)}</dd><dt>Session 时长中位数 / P95</dt><dd>{shortDuration(session.median_seconds)} / {shortDuration(session.p95_seconds)}</dd><dt>最长 Session</dt><dd>{shortDuration(session.longest_seconds)}</dd><dt>&gt; 6h / 12h / 24h</dt><dd>{session.over_6h ?? '—'} / {session.over_12h ?? '—'} / {session.over_24h ?? '—'}</dd></dl></div>
 }
 
-export function UsageTime({ provider }: { provider: string }) {
+export function UsageTime({ provider, accountId }: { provider: string; accountId: string }) {
   const [data,setData]=useState<any>(null), [timeline,setTimeline]=useState<'gmm'|'hmm'|'compare'>('compare')
-  useEffect(()=>{ setData(null); const scope=`provider=${encodeURIComponent(provider)}`; api<any>(`/api/usage-time/summary?${scope}`).then(summary=>Promise.all([
+  useEffect(()=>{ setData(null); const scope=scopeQuery(provider, accountId); api<any>(`/api/usage-time/summary?${scope}`).then(summary=>Promise.all([
     api<any>(`/api/usage-time/distribution?${scope}`),api<any>(`/api/usage-time/associations?${scope}`),
     api<Candidate[]>(`/api/usage-time/model-candidates?${scope}`),api<any>(`/api/usage-time/gmm?${scope}`),api<any>(`/api/usage-time/hmm?${scope}`),
     api<any[]>(`/api/usage-time/disagreements?limit=30&${scope}`),api<Boundary[]>(`/api/usage-time/boundaries?limit=240&${scope}`),
-  ]).then(([distribution,associations,candidates,gmm,hmm,disagreements,boundaries])=>setData({summary,distribution,associations,candidates,gmm,hmm,disagreements,boundaries})))},[provider])
+  ]).then(([distribution,associations,candidates,gmm,hmm,disagreements,boundaries])=>setData({summary,distribution,associations,candidates,gmm,hmm,disagreements,boundaries})))},[provider,accountId])
   const gmmCandidates=useMemo(()=>(data?.candidates||[]).filter((row:Candidate)=>row.model_family==='gmm'),[data])
   if(!data)return <div className="page-stack"><div className="empty">正在读取已保存的时长模型…</div></div>
   const {summary,distribution,associations,gmm,hmm}=data, enough=summary.status==='complete', matrix=summary.confusion_matrix||{}
@@ -91,7 +91,7 @@ export function UsageTime({ provider }: { provider: string }) {
 
       <section className="panel estimate-panel"><div className="panel-heading"><div><span className="eyebrow">11 · Model-implied</span><h2>估算聊天与数字活跃时间</h2></div><span className="quality-badge">Session 尾部余量：{Math.round(summary.tail_allowance_seconds/60)} 分钟</span></div><div className="estimate-grid"><div><span>GMM model-implied</span><b>{duration(gmm.estimated_usage_seconds)}</b><small>{gmm.sessions} sessions · 原始 span {duration(gmm.session_span_seconds)}</small></div><div><span>HMM model-implied</span><b>{duration(hmm.estimated_usage_seconds)}</b><small>{hmm.sessions} sessions · 原始 span {duration(hmm.session_span_seconds)}</small></div></div><p className="notice">模型设定敏感性范围：{duration(Math.min(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))} – {duration(Math.max(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))}。该结果根据交互时间戳与 Session 边界推断得到，不等同于真实持续注视屏幕或连续操作平台的时间，也不是统计置信区间。</p></section>
 
-      <p className="privacy-note provenance">模型 {summary.model_version} · 训练于 {dateLabel(summary.trained_at)} · {summary.sample_count} 个样本 · 核心特征 log1p(gap) + z-score · 边界阈值 {summary.boundary_threshold.toFixed(2)} · {provider || '全部 AI'}时间线</p>
+      <p className="privacy-note provenance">模型 {summary.model_version} · 训练于 {dateLabel(summary.trained_at)} · {summary.sample_count} 个样本 · 核心特征 log1p(gap) + z-score · 边界阈值 {summary.boundary_threshold.toFixed(2)} · {accountId || provider || '全部 AI'}时间线</p>
     </>}
   </div>
 }

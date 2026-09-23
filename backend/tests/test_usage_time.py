@@ -76,6 +76,37 @@ def test_raw_usage_statistics_survive_insufficient_samples(tmp_path):
     assert result["gmm"] is None
 
 
+def test_usage_time_can_be_scoped_to_one_account(tmp_path):
+    database = tmp_path / "scoped.db"
+    seed_history(database, event_count=3)
+    ensure_account(database, "other", "Other", "chatgpt")
+    now = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    with connect(database) as conn:
+        conn.execute(
+            """INSERT INTO conversations(
+            id,account_id,provider,remote_id,title,created_at,updated_at,fetched_at,content_hash
+            ) VALUES('other-conversation','other','chatgpt','other-conversation','Other',?,?,?,?)""",
+            (now.isoformat(), now.isoformat(), now.isoformat(), "other-hash"),
+        )
+        for index in range(2):
+            stamp = (now + timedelta(minutes=index)).isoformat()
+            conn.execute(
+                """INSERT INTO messages(
+                id,conversation_id,role,created_at,visible_text,visible_tokens,tokenizer_version,
+                content_hash,sequence_index,is_active_branch,has_attachment,analyzable
+                ) VALUES(?,?,?,?,?,?,?,?,?,1,0,1)""",
+                (f"other-{index}", "other-conversation", "user", stamp, "user", 10, "test", f"other-{index}", index),
+            )
+
+    config = {"min_model_samples": 1000}
+    aggregate = refresh_usage_time(database, config, "chatgpt")
+    scoped = refresh_usage_time(database, config, "chatgpt", "default")
+    assert aggregate["user_events"] == 5
+    assert scoped["user_events"] == 3
+    assert scoped["scope_account_id"] == "default"
+    assert usage_summary(database, "chatgpt", "default")["run_id"] == scoped["run_id"]
+
+
 def test_stable_state_order_uses_gap_characteristic_not_raw_id():
     assert semantic_state_order([3600, 120]) == [1, 0]
 

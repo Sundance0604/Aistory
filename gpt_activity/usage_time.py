@@ -37,9 +37,21 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=convert)
 
 
-def _events(db_path, provider: str = "") -> list[dict[str, Any]]:
-    scope_sql = "c.provider=?" if provider else "c.provider IN ('chatgpt','gemini')"
-    params = (provider,) if provider else ()
+def _scope(provider: str = "", account_id: str = "") -> tuple[str, tuple[str, ...]]:
+    clauses = ["c.provider=?"] if provider else ["c.provider IN ('chatgpt','gemini')"]
+    params = [provider] if provider else []
+    if account_id:
+        clauses.append("c.account_id=?")
+        params.append(account_id)
+    return " AND ".join(clauses), tuple(params)
+
+
+def _scope_key(provider: str = "", account_id: str = "") -> str:
+    return f"{provider}::{account_id}" if account_id else provider
+
+
+def _events(db_path, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
+    scope_sql, params = _scope(provider, account_id)
     with connect(db_path) as conn:
         rows = conn.execute(
             f"""
@@ -236,9 +248,8 @@ def boundary_diagnostics(gaps: list[dict[str, Any]], boundaries: Sequence[bool])
     }
 
 
-def _signature(db_path, config: dict[str, Any], provider: str = "") -> str:
-    scope_sql = "c.provider=?" if provider else "c.provider IN ('chatgpt','gemini')"
-    params = (provider,) if provider else ()
+def _signature(db_path, config: dict[str, Any], provider: str = "", account_id: str = "") -> str:
+    scope_sql, params = _scope(provider, account_id)
     with connect(db_path) as conn:
         row = conn.execute(
             f"""SELECT COUNT(*) n,MAX(m.created_at) latest,COALESCE(SUM(m.visible_tokens),0) tokens
@@ -246,23 +257,23 @@ def _signature(db_path, config: dict[str, Any], provider: str = "") -> str:
             WHERE m.is_active_branch=1 AND m.role='user' AND m.created_at IS NOT NULL AND {scope_sql}""",
             params,
         ).fetchone()
-    payload = {"version": MODEL_VERSION, "provider": provider or "ai", "n": row["n"], "latest": row["latest"], "tokens": row["tokens"], "config": config}
+    payload = {"version": MODEL_VERSION, "provider": provider or "ai", "account_id": account_id, "n": row["n"], "latest": row["latest"], "tokens": row["tokens"], "config": config}
     return hashlib.sha256(_json(payload).encode()).hexdigest()
 
 
-def refresh_usage_time(db_path, config: dict[str, Any], provider: str = "") -> dict[str, Any]:
+def refresh_usage_time(db_path, config: dict[str, Any], provider: str = "", account_id: str = "") -> dict[str, Any]:
     trained_at = datetime.now(timezone.utc).isoformat()
     tail_seconds = max(0, int(float(config.get("tail_allowance_minutes", 5)) * 60))
     minimum = max(2, int(config.get("min_model_samples", 50)))
     random_state = int(config.get("random_state", 42))
     boundary_threshold = min(1.0, max(0.0, float(config.get("boundary_threshold", 0.5))))
-    events, gaps = _events(db_path, provider), []
+    events, gaps = _events(db_path, provider, account_id), []
     gaps = _gaps(events)
     exploratory = _exploratory_matrix(gaps) if gaps else np.empty((0, len(EXPLORATORY_FEATURE_NAMES)))
     platforms = sorted({event["provider"] for event in events})
     accounts = sorted({event["account_id"] for event in events})
     base_summary: dict[str, Any] = {
-        "model_version": MODEL_VERSION, "trained_at": trained_at, "scope_provider": provider,
+        "model_version": MODEL_VERSION, "trained_at": trained_at, "scope_provider": provider, "scope_account_id": account_id,
         "status": "insufficient" if len(gaps) < minimum else "complete", "user_events": len(events),
         "sample_count": len(gaps), "minimum_model_samples": minimum,
         "first_event": events[0]["timestamp"] if events else None, "last_event": events[-1]["timestamp"] if events else None,
@@ -364,8 +375,9 @@ def refresh_usage_time(db_path, config: dict[str, Any], provider: str = "") -> d
             "gmm_yes_hmm_no": int(np.sum(gmm_decisions & ~hmm_decisions)), "gmm_yes_hmm_yes": int(np.sum(gmm_decisions & hmm_decisions)),
         }
 
+    scope_key = _scope_key(provider, account_id)
     with connect(db_path) as conn:
-        run_id = conn.execute("""INSERT INTO usage_time_model_runs(scope_provider,trained_at,status,model_version,sample_count,user_events,first_event,last_event,platforms_json,accounts_json,feature_names_json,feature_transform_json,random_state,tail_allowance_seconds,summary_json,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""", (provider, trained_at, base_summary["status"], MODEL_VERSION, len(gaps), len(events), base_summary["first_event"], base_summary["last_event"], _json(platforms), _json(accounts), _json(PRIMARY_FEATURE_NAMES), _json({"transform": "log1p gap then z-score", "scope": provider or "all AI providers"}), random_state, tail_seconds, _json(base_summary))).lastrowid
+        run_id = conn.execute("""INSERT INTO usage_time_model_runs(scope_provider,trained_at,status,model_version,sample_count,user_events,first_event,last_event,platforms_json,accounts_json,feature_names_json,feature_transform_json,random_state,tail_allowance_seconds,summary_json,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)""", (scope_key, trained_at, base_summary["status"], MODEL_VERSION, len(gaps), len(events), base_summary["first_event"], base_summary["last_event"], _json(platforms), _json(accounts), _json(PRIMARY_FEATURE_NAMES), _json({"transform": "log1p gap then z-score", "scope": account_id or provider or "all AI providers"}), random_state, tail_seconds, _json(base_summary))).lastrowid
         for index, row in enumerate(gaps):
             conn.execute("""INSERT INTO interaction_gaps(run_id,gap_index,from_message_id,to_message_id,from_timestamp,to_timestamp,gap_seconds,log_gap,prev_input_tokens,prev_output_tokens,next_input_tokens,same_conversation,same_account,same_platform,gmm_component,gmm_probabilities_json,gmm_break_probability,gmm_boundary,hmm_state,hmm_short_gap_probability,hmm_long_gap_probability,hmm_break_probability,hmm_boundary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
                 run_id, index, row["from_message_id"], row["to_message_id"], row["from_timestamp"], row["to_timestamp"], row["gap_seconds"], row["log_gap"], row["prev_input_tokens"], row["prev_output_tokens"], row["next_input_tokens"], int(row["same_conversation"]), int(row["same_account"]), int(row["same_platform"]),
@@ -377,45 +389,47 @@ def refresh_usage_time(db_path, config: dict[str, Any], provider: str = "") -> d
         for family, sessions in session_rows.items():
             for row in sessions:
                 conn.execute("""INSERT INTO usage_sessions(run_id,model_family,session_index,start_at,end_at,event_count,session_span_seconds,tail_allowance_seconds,estimated_usage_seconds,max_internal_gap_seconds,median_internal_gap_seconds,total_input_tokens,total_output_tokens) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (run_id, family, row["session_index"], row["start_at"], row["end_at"], row["event_count"], row["session_span_seconds"], row["tail_allowance_seconds"], row["estimated_usage_seconds"], row["max_internal_gap_seconds"], row["median_internal_gap_seconds"], row["total_input_tokens"], row["total_output_tokens"]))
-        signature_key = f"usage_time_signature:{provider or 'ai'}"
-        conn.execute("INSERT INTO app_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (signature_key, _signature(db_path, config, provider)))
-        conn.execute("DELETE FROM usage_time_model_runs WHERE scope_provider=? AND id NOT IN (SELECT id FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 10)", (provider, provider))
+        signature_key = f"usage_time_signature:{scope_key or 'ai'}"
+        conn.execute("INSERT INTO app_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (signature_key, _signature(db_path, config, provider, account_id)))
+        conn.execute("DELETE FROM usage_time_model_runs WHERE scope_provider=? AND id NOT IN (SELECT id FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 10)", (scope_key, scope_key))
     return {"run_id": run_id, **base_summary}
 
 
-def ensure_usage_time(db_path, config: dict[str, Any], provider: str = "") -> None:
-    expected = _signature(db_path, config, provider)
-    signature_key = f"usage_time_signature:{provider or 'ai'}"
+def ensure_usage_time(db_path, config: dict[str, Any], provider: str = "", account_id: str = "") -> None:
+    expected = _signature(db_path, config, provider, account_id)
+    scope_key = _scope_key(provider, account_id)
+    signature_key = f"usage_time_signature:{scope_key or 'ai'}"
     with connect(db_path) as conn:
         saved = conn.execute("SELECT value FROM app_metadata WHERE key=?", (signature_key,)).fetchone()
-        run = conn.execute("SELECT id FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 1", (provider,)).fetchone()
+        run = conn.execute("SELECT id FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 1", (scope_key,)).fetchone()
     if not run or not saved or saved["value"] != expected:
-        refresh_usage_time(db_path, config, provider)
+        refresh_usage_time(db_path, config, provider, account_id)
 
 
-def _latest(db_path, provider: str = "") -> tuple[int | None, dict[str, Any]]:
+def _latest(db_path, provider: str = "", account_id: str = "") -> tuple[int | None, dict[str, Any]]:
+    scope_key = _scope_key(provider, account_id)
     with connect(db_path) as conn:
-        row = conn.execute("SELECT id,summary_json FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 1", (provider,)).fetchone()
+        row = conn.execute("SELECT id,summary_json FROM usage_time_model_runs WHERE scope_provider=? ORDER BY id DESC LIMIT 1", (scope_key,)).fetchone()
     return (None, {"status": "never"}) if not row else (row["id"], json.loads(row["summary_json"]))
 
 
-def usage_summary(db_path, provider: str = "") -> dict[str, Any]:
-    run_id, summary = _latest(db_path, provider)
+def usage_summary(db_path, provider: str = "", account_id: str = "") -> dict[str, Any]:
+    run_id, summary = _latest(db_path, provider, account_id)
     return {"run_id": run_id, **summary}
 
 
-def usage_distribution(db_path, provider: str = "") -> dict[str, Any]:
-    run_id, summary = _latest(db_path, provider)
+def usage_distribution(db_path, provider: str = "", account_id: str = "") -> dict[str, Any]:
+    run_id, summary = _latest(db_path, provider, account_id)
     return {"run_id": run_id, **summary.get("distribution", {})}
 
 
-def usage_associations(db_path, provider: str = "") -> dict[str, Any]:
-    run_id, summary = _latest(db_path, provider)
+def usage_associations(db_path, provider: str = "", account_id: str = "") -> dict[str, Any]:
+    run_id, summary = _latest(db_path, provider, account_id)
     return {"run_id": run_id, **summary.get("associations", {})}
 
 
-def usage_candidates(db_path, provider: str = "") -> list[dict[str, Any]]:
-    run_id, _ = _latest(db_path, provider)
+def usage_candidates(db_path, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
+    run_id, _ = _latest(db_path, provider, account_id)
     if run_id is None:
         return []
     with connect(db_path) as conn:
@@ -423,13 +437,13 @@ def usage_candidates(db_path, provider: str = "") -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def usage_model(db_path, family: str, provider: str = "") -> dict[str, Any]:
-    run_id, summary = _latest(db_path, provider)
+def usage_model(db_path, family: str, provider: str = "", account_id: str = "") -> dict[str, Any]:
+    run_id, summary = _latest(db_path, provider, account_id)
     return {"run_id": run_id, **(summary.get(family) or {})}
 
 
-def usage_disagreements(db_path, limit: int = 50, provider: str = "") -> list[dict[str, Any]]:
-    run_id, _ = _latest(db_path, provider)
+def usage_disagreements(db_path, limit: int = 50, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
+    run_id, _ = _latest(db_path, provider, account_id)
     if run_id is None:
         return []
     with connect(db_path) as conn:
@@ -437,8 +451,8 @@ def usage_disagreements(db_path, limit: int = 50, provider: str = "") -> list[di
     return [dict(row) for row in rows]
 
 
-def usage_boundaries(db_path, limit: int = 240, provider: str = "") -> list[dict[str, Any]]:
-    run_id, _ = _latest(db_path, provider)
+def usage_boundaries(db_path, limit: int = 240, provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
+    run_id, _ = _latest(db_path, provider, account_id)
     if run_id is None:
         return []
     with connect(db_path) as conn:
@@ -446,10 +460,10 @@ def usage_boundaries(db_path, limit: int = 240, provider: str = "") -> list[dict
     return [dict(row) for row in rows]
 
 
-def usage_sessions(db_path, family: str = "gmm", provider: str = "") -> list[dict[str, Any]]:
+def usage_sessions(db_path, family: str = "gmm", provider: str = "", account_id: str = "") -> list[dict[str, Any]]:
     if family not in {"gmm", "hmm"}:
         raise ValueError("family must be gmm or hmm")
-    run_id, _ = _latest(db_path, provider)
+    run_id, _ = _latest(db_path, provider, account_id)
     if run_id is None:
         return []
     with connect(db_path) as conn:

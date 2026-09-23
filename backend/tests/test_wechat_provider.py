@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from gpt_activity.analytics import conversation_rankings, refresh_analytics, summary
+from gpt_activity.analytics import conversation_rankings, records, refresh_analytics, summary
 from gpt_activity.config import load_settings, upsert_account
 from gpt_activity.db import connect
 from gpt_activity.providers.wechat.common import md5_username
@@ -150,11 +150,16 @@ def test_same_named_accounts_and_message_ids_do_not_collide(tmp_path, monkeypatc
     )
     for item in settings.accounts:
         run_wechat_sync(settings, item)
+    refresh_analytics(settings.database_path, settings.timezone, settings.values["analytics"])
     with connect(settings.database_path) as conn:
         assert conn.execute("SELECT COUNT(*) n FROM accounts WHERE provider='wechat'").fetchone()["n"] == 2
         assert conn.execute("SELECT COUNT(DISTINCT id) n FROM messages").fetchone()["n"] == 2
         assert conn.execute("SELECT COUNT(*) n FROM conversations").fetchone()["n"] == 2
         assert conn.execute("SELECT COUNT(DISTINCT id) n FROM conversations WHERE remote_id='wxid_teacher'").fetchone()["n"] == 2
+    assert summary(settings.database_path, provider="wechat")["total_messages"] == 2
+    assert summary(settings.database_path, provider="wechat", account_id="wechat_main")["total_messages"] == 1
+    assert summary(settings.database_path, provider="wechat", account_id="wechat_alt")["total_messages"] == 1
+    assert records(settings.database_path, settings.timezone, "wechat", "wechat_main")["most_messages"]["account_id"] == "wechat_main"
 
 
 def test_wrong_data_directory_is_rejected(tmp_path, monkeypatch):

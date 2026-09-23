@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, compact } from '../api'
+import { api, compact, scopeQuery } from '../api'
 import type { Conversation } from '../types'
 
 const aiSorts = [
@@ -7,12 +7,12 @@ const aiSorts = [
 ]
 const wechatSorts = [['total_messages', '总消息'], ['outbound_messages', '我发送'], ['inbound_messages', '收到'], ['active_days', '活跃日'], ['calendar_span_days', '生命周期']]
 
-export function History({ provider, onConversation }: { provider: string; onConversation: (id: string) => void }) {
+export function History({ provider, accountId, onConversation }: { provider: string; accountId: string; onConversation: (id: string) => void }) {
   const [sort, setSort] = useState(provider === 'wechat' ? 'total_messages' : 'total_visible_tokens')
   const [rows, setRows] = useState<Conversation[]>([])
   const [records, setRecords] = useState<any>(null)
   useEffect(() => { setSort(provider === 'wechat' ? 'total_messages' : 'total_visible_tokens') }, [provider])
-  useEffect(() => { api<Conversation[]>(`/api/rankings/conversations?sort=${sort}&limit=100&provider=${provider}`).then(setRows); api(`/api/records?provider=${provider}`).then(setRecords) }, [sort, provider])
+  useEffect(() => { const scope = scopeQuery(provider, accountId); api<Conversation[]>(`/api/rankings/conversations?sort=${sort}&limit=100&${scope}`).then(setRows); api(`/api/records?${scope}`).then(setRecords) }, [sort, provider, accountId])
   const isWechat = provider === 'wechat'
   const messageMode = isWechat
   const sorts = isWechat ? wechatSorts : aiSorts

@@ -276,10 +276,10 @@ def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset
     return result
 
 
-def message_rankings(db_path, role, limit=20, provider=""):
+def message_rankings(db_path, role, limit=20, provider="", account_id=""):
     if role not in {"user", "assistant"}:
         raise ValueError("role must be user or assistant")
-    where, values = _scope(provider)
+    where, values = _scope(provider, account_id)
     with connect(db_path) as conn:
         rows = conn.execute(
             f"SELECT m.id,m.conversation_id,c.title,m.created_at,m.visible_tokens,substr(m.visible_text,1,240) preview "
@@ -337,9 +337,9 @@ def lifecycle(db_path, provider="", account_id=""):
     return conversation_rankings(db_path, "updated_at", 5000, 0, "", account_id, provider)
 
 
-def records(db_path, timezone_name, provider=""):
-    days = daily_series(db_path, timezone_name, provider)
-    conversations = conversation_rankings(db_path, "total_messages", 5000, provider=provider)
+def records(db_path, timezone_name, provider="", account_id=""):
+    days = daily_series(db_path, timezone_name, provider, account_id)
+    conversations = conversation_rankings(db_path, "total_messages", 5000, account_id=account_id, provider=provider)
     return {
         "busiest_day_by_prompts": max(days, key=lambda row: row["prompts"], default=None),
         "busiest_day_by_tokens": max(days, key=lambda row: row["total_visible_tokens"], default=None),
@@ -349,6 +349,6 @@ def records(db_path, timezone_name, provider=""):
         "most_inbound": max(conversations, key=lambda row: row["inbound_messages"], default=None),
         "most_active_days": max(conversations, key=lambda row: row.get("active_days") or 0, default=None),
         "longest_lifecycle": max(conversations, key=lambda row: row.get("calendar_span_days") or 0, default=None),
-        "largest_user_prompts": message_rankings(db_path, "user", 5, provider),
-        "largest_assistant_responses": message_rankings(db_path, "assistant", 5, provider),
+        "largest_user_prompts": message_rankings(db_path, "user", 5, provider, account_id),
+        "largest_assistant_responses": message_rankings(db_path, "assistant", 5, provider, account_id),
     }

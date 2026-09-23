@@ -5,7 +5,7 @@ import { MetricCard } from '../components/MetricCard'
 import { MiniBars } from '../components/MiniBars'
 import type { Conversation, Day, Summary } from '../types'
 
-export function Overview({ summary, days, conversations, provider, onConversation }: { summary: Summary; days: Day[]; conversations: Conversation[]; provider: string; onConversation: (id: string) => void }) {
+export function Overview({ summary, days, conversations, provider, accountId, onConversation }: { summary: Summary; days: Day[]; conversations: Conversation[]; provider: string; accountId: string; onConversation: (id: string) => void }) {
   const isWechat = provider === 'wechat'
   return (
     <div className="page-stack">
@@ -26,7 +26,7 @@ export function Overview({ summary, days, conversations, provider, onConversatio
         </>}
         <MetricCard label="活跃天数" value={compact(summary.active_days)} note={`最近 ${dateLabel(summary.latest_activity)}`} icon={<CalendarDays size={18} />} />
       </div>
-      <ActivityHeatmap data={days} provider={provider} onConversation={onConversation} />
+      <ActivityHeatmap data={days} provider={provider} accountId={accountId} onConversation={onConversation} />
       <div className="two-column">
         <section className="panel">
           <div className="panel-heading"><div><span className="eyebrow">完整历史</span><h2>活动趋势</h2></div></div>

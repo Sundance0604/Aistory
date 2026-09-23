@@ -10,6 +10,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json()
 }
 
+export function scopeQuery(provider = '', accountId = ''): string {
+  const params = new URLSearchParams()
+  if (provider) params.set('provider', provider)
+  if (accountId) params.set('account_id', accountId)
+  return params.toString()
+}
+
 export const number = new Intl.NumberFormat('zh-CN')
 
 export function compact(value: number): string {

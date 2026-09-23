@@ -164,68 +164,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return lifecycle(settings.database_path, provider, account_id)
 
     @app.get("/api/rankings/messages")
-    def get_message_rankings(role: str = "user", limit: int = Query(20, ge=1, le=200), provider: str = ""):
+    def get_message_rankings(role: str = "user", limit: int = Query(20, ge=1, le=200), provider: str = "", account_id: str = ""):
         try:
-            return message_rankings(settings.database_path, role, limit, provider)
+            return message_rankings(settings.database_path, role, limit, provider, account_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/records")
-    def get_records(provider: str = ""):
-        return records(settings.database_path, settings.timezone, provider)
+    def get_records(provider: str = "", account_id: str = ""):
+        return records(settings.database_path, settings.timezone, provider, account_id)
 
     @app.get("/api/usage-time/summary")
-    def get_usage_time_summary(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_summary(settings.database_path, provider)
+    def get_usage_time_summary(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_summary(settings.database_path, provider, account_id)
 
     @app.get("/api/usage-time/distribution")
-    def get_usage_time_distribution(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_distribution(settings.database_path, provider)
+    def get_usage_time_distribution(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_distribution(settings.database_path, provider, account_id)
 
     @app.get("/api/usage-time/associations")
-    def get_usage_time_associations(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_associations(settings.database_path, provider)
+    def get_usage_time_associations(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_associations(settings.database_path, provider, account_id)
 
     @app.get("/api/usage-time/model-candidates")
-    def get_usage_time_candidates(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_candidates(settings.database_path, provider)
+    def get_usage_time_candidates(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_candidates(settings.database_path, provider, account_id)
 
     @app.get("/api/usage-time/gmm")
-    def get_usage_time_gmm(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_model(settings.database_path, "gmm", provider)
+    def get_usage_time_gmm(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_model(settings.database_path, "gmm", provider, account_id)
 
     @app.get("/api/usage-time/hmm")
-    def get_usage_time_hmm(provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_model(settings.database_path, "hmm", provider)
+    def get_usage_time_hmm(provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_model(settings.database_path, "hmm", provider, account_id)
 
     @app.get("/api/usage-time/disagreements")
-    def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500), provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_disagreements(settings.database_path, limit, provider)
+    def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500), provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_disagreements(settings.database_path, limit, provider, account_id)
 
     @app.get("/api/usage-time/boundaries")
-    def get_usage_time_boundaries(limit: int = Query(240, ge=1, le=1000), provider: str = ""):
-        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-        return usage_boundaries(settings.database_path, limit, provider)
+    def get_usage_time_boundaries(limit: int = Query(240, ge=1, le=1000), provider: str = "", account_id: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+        return usage_boundaries(settings.database_path, limit, provider, account_id)
 
     @app.get("/api/usage-time/sessions")
-    def get_usage_time_sessions(model: str = "gmm", provider: str = ""):
+    def get_usage_time_sessions(model: str = "gmm", provider: str = "", account_id: str = ""):
         try:
-            ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
-            return usage_sessions(settings.database_path, model, provider)
+            ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id)
+            return usage_sessions(settings.database_path, model, provider, account_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/usage-time/rebuild")
     def rebuild_usage_time(body: dict[str, Any] | None = None):
         provider = str((body or {}).get("provider") or "")
-        return _start_job("usage-time", lambda: refresh_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider))
+        account_id = str((body or {}).get("account_id") or "")
+        return _start_job("usage-time", lambda: refresh_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider, account_id))
 
     @app.get("/api/conversations")
     def get_conversations(

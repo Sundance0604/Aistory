@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { Day, DayConversation } from '../types'
-import { api, compact, number } from '../api'
+import { api, compact, number, scopeQuery } from '../api'
 
 type Metric = 'prompts' | 'outbound_messages' | 'total_messages' | 'total_visible_tokens' | 'active_conversations'
 
@@ -16,7 +16,7 @@ function dayKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: { data: Day[]; provider?: string; onDay?: (day: string) => void; onConversation?: (id: string) => void }) {
+export function ActivityHeatmap({ data, provider = '', accountId = '', onDay, onConversation }: { data: Day[]; provider?: string; accountId?: string; onDay?: (day: string) => void; onConversation?: (id: string) => void }) {
   const availableYears = useMemo(() => {
     const years = [...new Set(data.map((item) => Number(item.date.slice(0, 4))))].sort((a, b) => b - a)
     return years.length ? years : [new Date().getFullYear()]
@@ -69,7 +69,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
     if (!availableYears.includes(year)) setYear(availableYears[0])
     setSelectedKey(undefined)
     setConversations([])
-  }, [data, provider, availableYears, year])
+  }, [data, provider, accountId, availableYears, year])
   useEffect(() => { setMetric(messageMode ? 'outbound_messages' : 'prompts') }, [messageMode])
 
   const selectDay = async (key: string) => {
@@ -77,7 +77,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
     onDay?.(key)
     setLoadingDay(true)
     try {
-      setConversations(await api<DayConversation[]>(`/api/activity/${key}/conversations?provider=${encodeURIComponent(provider)}`))
+      setConversations(await api<DayConversation[]>(`/api/activity/${key}/conversations?${scopeQuery(provider, accountId)}`))
     } finally {
       setLoadingDay(false)
     }
@@ -132,7 +132,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
       </div>
       <div className="legend"><span>少</span>{[0, 1, 2, 3, 4].map((item) => <i className={`level-${item}`} key={item} />)}<span>多</span><b>非零天按四分位分档</b></div>
       {selected && <div className="day-detail"><div><span className="eyebrow">所选日期</span><b>{selected.date}</b></div>{messageMode ? <><div><strong>{number.format(selected.outbound_messages)}</strong><span>{provider === 'wechat' ? '我发送' : '主动事件'}</span></div><div><strong>{number.format(selected.inbound_messages)}</strong><span>{provider === 'wechat' ? '收到' : '响应事件'}</span></div><div><strong>{number.format(selected.total_messages)}</strong><span>总事件</span></div></> : <><div><strong>{number.format(selected.prompts)}</strong><span>提示</span></div><div><strong>{number.format(selected.total_visible_tokens)}</strong><span>总可见 Token</span></div><div><strong>{number.format(selected.prompt_visible_tokens)}</strong><span>输入</span></div><div><strong>{number.format(selected.response_visible_tokens)}</strong><span>输出</span></div></>}</div>}
-      {selected && <div className="heatmap-day-conversations"><div className="day-list-heading"><span className="eyebrow">当日进行的对话</span><b>{loadingDay ? '读取中…' : `${conversations.length} 个对话`}</b></div><div className="day-conversations">{conversations.map(row => <button onClick={() => onConversation?.(row.id)} key={row.id} style={{'--topic-color': row.provider === 'wechat' ? (row.conversation_type === 'group' ? '#8E7FA6' : '#6D9AA3') : row.topic_color || 'var(--accent)'} as React.CSSProperties}><span className="topic-dot"/><div><b>{row.title}</b><small>{row.account_display_name || row.account_name} · {row.provider === 'wechat' ? (row.conversation_type === 'group' ? '群聊' : '私聊') : `${row.provider.toUpperCase()} · ${row.dominant_topic || '未分类'}`}</small></div><strong>{row.provider === 'wechat' ? `${compact(row.outbound_messages)} 我发送 · ${compact(row.total_messages)} 消息` : `${compact(row.prompts)} 提示 · ${compact(row.total_visible_tokens)} Token`}</strong></button>)}</div></div>}
+      {selected && <div className="heatmap-day-conversations"><div className="day-list-heading"><span className="eyebrow">当日进行的对话</span><b>{loadingDay ? '读取中…' : `${conversations.length} 个对话`}</b></div><div className="day-conversations">{conversations.map(row => <button onClick={() => onConversation?.(row.id)} key={row.id} style={{'--topic-color': row.provider === 'wechat' ? '#524765' : row.topic_color || 'var(--accent)'} as React.CSSProperties}><span className="topic-dot"/><div><b>{row.title}</b><small>{row.account_display_name || row.account_name} · {row.provider === 'wechat' ? (row.conversation_type === 'group' ? '群聊' : '私聊') : `${row.provider.toUpperCase()} · ${row.dominant_topic || '未分类'}`}</small></div><strong>{row.provider === 'wechat' ? `${compact(row.outbound_messages)} 我发送 · ${compact(row.total_messages)} 消息` : `${compact(row.prompts)} 提示 · ${compact(row.total_visible_tokens)} Token`}</strong></button>)}</div></div>}
     </section>
   )
 }

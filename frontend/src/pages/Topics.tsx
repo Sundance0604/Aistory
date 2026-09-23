@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api } from '../api'
+import { api, scopeQuery } from '../api'
 import type { Topic, TopicTimeline } from '../types'
 
-export function Topics({ provider, job, onJobChange, onCancel }: { provider: string; job: any; onJobChange: (job:any)=>void; onCancel: ()=>void }) {
+export function Topics({ provider, accountId, job, onJobChange, onCancel }: { provider: string; accountId: string; job: any; onJobChange: (job:any)=>void; onCancel: ()=>void }) {
   const [topics, setTopics] = useState<Topic[]>([])
   const [timeline, setTimeline] = useState<TopicTimeline[]>([])
   const [metric, setMetric] = useState<'prompt_percent' | 'token_percent'>('token_percent')
   const [status, setStatus] = useState('')
-  useEffect(() => { api<Topic[]>(`/api/topics?provider=${provider}`).then(setTopics); api<TopicTimeline[]>(`/api/topics/timeline?provider=${provider}`).then(setTimeline) }, [provider])
+  useEffect(() => { const scope = scopeQuery(provider, accountId); api<Topic[]>(`/api/topics?${scope}`).then(setTopics); api<TopicTimeline[]>(`/api/topics/timeline?${scope}`).then(setTimeline) }, [provider, accountId])
   const periods = useMemo(() => [...new Set(timeline.map((item) => item.period))].slice(-12), [timeline])
   const active = job?.kind === 'topics' && ['running', 'cancelling'].includes(job.status)
   if (provider === 'wechat') return <div className="page-stack"><header className="page-header"><div><span className="eyebrow">Provider capability</span><h1>主题</h1></div></header><section className="panel empty"><h3>微信主题分析暂未启用</h3><p>微信消息不会发送给主题分类 API，也不会进入“全部 AI”的主题占比。</p></section></div>
