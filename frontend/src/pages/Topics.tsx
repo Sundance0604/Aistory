@@ -10,7 +10,7 @@ export function Topics({ provider, job, onJobChange, onCancel }: { provider: str
   useEffect(() => { api<Topic[]>(`/api/topics?provider=${provider}`).then(setTopics); api<TopicTimeline[]>(`/api/topics/timeline?provider=${provider}`).then(setTimeline) }, [provider])
   const periods = useMemo(() => [...new Set(timeline.map((item) => item.period))].slice(-12), [timeline])
   const active = job?.kind === 'topics' && ['running', 'cancelling'].includes(job.status)
-  if (provider === 'wechat') return <div className="page-stack"><header className="page-header"><div><span className="eyebrow">Provider capability</span><h1>主题</h1></div></header><section className="panel empty"><h3>微信主题分析暂未启用</h3><p>微信消息不会发送给主题分类 API，也不会进入全部平台的主题占比。</p></section></div>
+  if (provider === 'wechat') return <div className="page-stack"><header className="page-header"><div><span className="eyebrow">Provider capability</span><h1>主题</h1></div></header><section className="panel empty"><h3>微信主题分析暂未启用</h3><p>微信消息不会发送给主题分类 API，也不会进入“全部 AI”的主题占比。</p></section></div>
   const analyze = async () => {
     try {
       const started = await api<any>('/api/topics/classify-new', { method: 'POST', body: '{}' })

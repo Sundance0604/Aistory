@@ -54,18 +54,18 @@ function ModelDiagnostics({ name, model }: { name:string; model:any }) {
   return <div className="diagnostic-card"><h3>{name}</h3><dl><dt>边界 / 比例</dt><dd>{boundary.boundaries ?? '—'} / {boundary.boundary_rate == null?'—':`${(boundary.boundary_rate*100).toFixed(1)}%`}</dd><dt>Session</dt><dd>{boundary.sessions ?? '—'}</dd><dt>Session 内 gap 中位数</dt><dd>{shortDuration(boundary.median_within_gap_seconds)}</dd><dt>Session 内 gap P90 / 最大</dt><dd>{shortDuration(boundary.p90_within_gap_seconds)} / {shortDuration(boundary.max_within_gap_seconds)}</dd><dt>边界 gap 中位数 / 最小</dt><dd>{shortDuration(boundary.median_break_gap_seconds)} / {shortDuration(boundary.minimum_break_gap_seconds)}</dd><dt>Session 时长中位数 / P95</dt><dd>{shortDuration(session.median_seconds)} / {shortDuration(session.p95_seconds)}</dd><dt>最长 Session</dt><dd>{shortDuration(session.longest_seconds)}</dd><dt>&gt; 6h / 12h / 24h</dt><dd>{session.over_6h ?? '—'} / {session.over_12h ?? '—'} / {session.over_24h ?? '—'}</dd></dl></div>
 }
 
-export function UsageTime() {
+export function UsageTime({ provider }: { provider: string }) {
   const [data,setData]=useState<any>(null), [timeline,setTimeline]=useState<'gmm'|'hmm'|'compare'>('compare')
-  useEffect(()=>{Promise.all([
-    api<any>('/api/usage-time/summary'),api<any>('/api/usage-time/distribution'),api<any>('/api/usage-time/associations'),
-    api<Candidate[]>('/api/usage-time/model-candidates'),api<any>('/api/usage-time/gmm'),api<any>('/api/usage-time/hmm'),
-    api<any[]>('/api/usage-time/disagreements?limit=30'),api<Boundary[]>('/api/usage-time/boundaries?limit=240'),
-  ]).then(([summary,distribution,associations,candidates,gmm,hmm,disagreements,boundaries])=>setData({summary,distribution,associations,candidates,gmm,hmm,disagreements,boundaries}))},[])
+  useEffect(()=>{ setData(null); const scope=`provider=${encodeURIComponent(provider)}`; api<any>(`/api/usage-time/summary?${scope}`).then(summary=>Promise.all([
+    api<any>(`/api/usage-time/distribution?${scope}`),api<any>(`/api/usage-time/associations?${scope}`),
+    api<Candidate[]>(`/api/usage-time/model-candidates?${scope}`),api<any>(`/api/usage-time/gmm?${scope}`),api<any>(`/api/usage-time/hmm?${scope}`),
+    api<any[]>(`/api/usage-time/disagreements?limit=30&${scope}`),api<Boundary[]>(`/api/usage-time/boundaries?limit=240&${scope}`),
+  ]).then(([distribution,associations,candidates,gmm,hmm,disagreements,boundaries])=>setData({summary,distribution,associations,candidates,gmm,hmm,disagreements,boundaries})))},[provider])
   const gmmCandidates=useMemo(()=>(data?.candidates||[]).filter((row:Candidate)=>row.model_family==='gmm'),[data])
   if(!data)return <div className="page-stack"><div className="empty">正在读取已保存的时长模型…</div></div>
   const {summary,distribution,associations,gmm,hmm}=data, enough=summary.status==='complete', matrix=summary.confusion_matrix||{}
   return <div className="page-stack usage-time">
-    <header className="page-header"><div><span className="eyebrow">Interaction Rhythm & Session Inference</span><h1>估算数字活跃时间</h1></div><p>从各平台主动事件时间戳推断间隔状态与 Session 边界；微信只使用本人发送消息作为强活动锚点。结果不是真实持续操作时长。</p></header>
+    <header className="page-header"><div><span className="eyebrow">Interaction Rhythm & Session Inference</span><h1>{provider === 'wechat' ? '估算聊天活跃时间' : '估算数字活跃时间'}</h1></div><p>{provider === 'wechat' ? '只使用本人发送消息作为强活动锚点；收到消息不会单独生成 Session。' : !provider ? '“全部 AI”只合并 ChatGPT 与 Gemini 的主动事件，不包含微信。' : '从当前 AI Provider 的主动事件时间戳推断 Session 边界。'}结果不是真实持续操作时长。</p></header>
 
     <section className="panel"><div className="panel-heading"><div><span className="eyebrow">01 · Observed</span><h2>原始行为</h2></div></div><div className="usage-metrics"><div><span>用户事件</span><b>{number.format(summary.user_events||0)}</b></div><div><span>相邻间隔</span><b>{number.format(summary.sample_count||0)}</b></div><div><span>时间范围</span><b>{dateLabel(summary.first_event)} → {dateLabel(summary.last_event)}</b></div><div><span>覆盖平台 / 账号</span><b>{(summary.platforms||[]).join(' + ')||'—'} · {(summary.accounts||[]).length}</b></div></div></section>
 
@@ -91,7 +91,7 @@ export function UsageTime() {
 
       <section className="panel estimate-panel"><div className="panel-heading"><div><span className="eyebrow">11 · Model-implied</span><h2>估算聊天与数字活跃时间</h2></div><span className="quality-badge">Session 尾部余量：{Math.round(summary.tail_allowance_seconds/60)} 分钟</span></div><div className="estimate-grid"><div><span>GMM model-implied</span><b>{duration(gmm.estimated_usage_seconds)}</b><small>{gmm.sessions} sessions · 原始 span {duration(gmm.session_span_seconds)}</small></div><div><span>HMM model-implied</span><b>{duration(hmm.estimated_usage_seconds)}</b><small>{hmm.sessions} sessions · 原始 span {duration(hmm.session_span_seconds)}</small></div></div><p className="notice">模型设定敏感性范围：{duration(Math.min(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))} – {duration(Math.max(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))}。该结果根据交互时间戳与 Session 边界推断得到，不等同于真实持续注视屏幕或连续操作平台的时间，也不是统计置信区间。</p></section>
 
-      <p className="privacy-note provenance">模型 {summary.model_version} · 训练于 {dateLabel(summary.trained_at)} · {summary.sample_count} 个样本 · 核心特征 log1p(gap) + z-score · 边界阈值 {summary.boundary_threshold.toFixed(2)} · 所有平台全局时间线</p>
+      <p className="privacy-note provenance">模型 {summary.model_version} · 训练于 {dateLabel(summary.trained_at)} · {summary.sample_count} 个样本 · 核心特征 log1p(gap) + z-score · 边界阈值 {summary.boundary_threshold.toFixed(2)} · {provider || '全部 AI'}时间线</p>
     </>}
   </div>
 }

@@ -52,7 +52,7 @@ export default function App() {
   const openConversation = (id: string) => setConversationId(id)
   const content = page === 'overview' ? <Overview summary={summary} days={days} conversations={top} provider={provider} onConversation={openConversation} />
     : page === 'activity' ? <ActivityPage initial={days} provider={provider} onConversation={openConversation} />
-    : page === 'usage' ? <UsageTime />
+    : page === 'usage' ? <UsageTime provider={provider} />
     : page === 'lifecycle' ? <Lifecycle provider={provider} onConversation={openConversation} />
     : page === 'history' ? <History provider={provider} onConversation={openConversation} />
     : page === 'topics' ? <Topics provider={provider} job={job} onJobChange={setJob} onCancel={cancelTopics} />
@@ -63,7 +63,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand"><span>A</span><div><b>Aistory</b><small>LOCAL DIGITAL HISTORY</small></div></div>
         <nav>{navigation.map(([key, label, Icon]) => <button className={page === key ? 'active' : ''} onClick={() => { setPage(key); setConversationId(undefined) }} key={key}><Icon size={18} /><span>{label}</span></button>)}</nav>
-        <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部</option>{providers.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
+        <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部 AI</option>{providers.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>
       </aside>
       <main>{error ? <div className="error-banner"><b>无法读取本地 API</b><span>{error}</span></div> : content}</main>

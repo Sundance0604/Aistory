@@ -174,47 +174,57 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return records(settings.database_path, settings.timezone, provider)
 
     @app.get("/api/usage-time/summary")
-    def get_usage_time_summary():
-        return usage_summary(settings.database_path)
+    def get_usage_time_summary(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_summary(settings.database_path, provider)
 
     @app.get("/api/usage-time/distribution")
-    def get_usage_time_distribution():
-        return usage_distribution(settings.database_path)
+    def get_usage_time_distribution(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_distribution(settings.database_path, provider)
 
     @app.get("/api/usage-time/associations")
-    def get_usage_time_associations():
-        return usage_associations(settings.database_path)
+    def get_usage_time_associations(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_associations(settings.database_path, provider)
 
     @app.get("/api/usage-time/model-candidates")
-    def get_usage_time_candidates():
-        return usage_candidates(settings.database_path)
+    def get_usage_time_candidates(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_candidates(settings.database_path, provider)
 
     @app.get("/api/usage-time/gmm")
-    def get_usage_time_gmm():
-        return usage_model(settings.database_path, "gmm")
+    def get_usage_time_gmm(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_model(settings.database_path, "gmm", provider)
 
     @app.get("/api/usage-time/hmm")
-    def get_usage_time_hmm():
-        return usage_model(settings.database_path, "hmm")
+    def get_usage_time_hmm(provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_model(settings.database_path, "hmm", provider)
 
     @app.get("/api/usage-time/disagreements")
-    def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500)):
-        return usage_disagreements(settings.database_path, limit)
+    def get_usage_time_disagreements(limit: int = Query(50, ge=1, le=500), provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_disagreements(settings.database_path, limit, provider)
 
     @app.get("/api/usage-time/boundaries")
-    def get_usage_time_boundaries(limit: int = Query(240, ge=1, le=1000)):
-        return usage_boundaries(settings.database_path, limit)
+    def get_usage_time_boundaries(limit: int = Query(240, ge=1, le=1000), provider: str = ""):
+        ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+        return usage_boundaries(settings.database_path, limit, provider)
 
     @app.get("/api/usage-time/sessions")
-    def get_usage_time_sessions(model: str = "gmm"):
+    def get_usage_time_sessions(model: str = "gmm", provider: str = ""):
         try:
-            return usage_sessions(settings.database_path, model)
+            ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider)
+            return usage_sessions(settings.database_path, model, provider)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/usage-time/rebuild")
-    def rebuild_usage_time():
-        return _start_job("usage-time", lambda: refresh_usage_time(settings.database_path, settings.values.get("usage_time", {})))
+    def rebuild_usage_time(body: dict[str, Any] | None = None):
+        provider = str((body or {}).get("provider") or "")
+        return _start_job("usage-time", lambda: refresh_usage_time(settings.database_path, settings.values.get("usage_time", {}), provider))
 
     @app.get("/api/conversations")
     def get_conversations(

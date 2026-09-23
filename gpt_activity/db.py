@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -188,6 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_conversation_date ON daily_conversation_act
 
 CREATE TABLE IF NOT EXISTS usage_time_model_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_provider TEXT NOT NULL DEFAULT '',
     trained_at TEXT NOT NULL,
     status TEXT NOT NULL,
     model_version TEXT NOT NULL,
@@ -372,6 +373,9 @@ def migrate(path: str | Path) -> None:
         for column, declaration in session_additions.items():
             if column not in session_columns:
                 conn.execute(f"ALTER TABLE usage_sessions ADD COLUMN {column} {declaration}")
+        run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(usage_time_model_runs)")}
+        if "scope_provider" not in run_columns:
+            conn.execute("ALTER TABLE usage_time_model_runs ADD COLUMN scope_provider TEXT NOT NULL DEFAULT ''")
         conn.execute("DROP INDEX IF EXISTS idx_conversations_account_remote")
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_provider_account_remote "

@@ -24,6 +24,8 @@ def _scope(provider: str = "", account_id: str = "", alias: str = "c") -> tuple[
     if provider:
         clauses.append(f"{alias}.provider=?")
         values.append(provider)
+    else:
+        clauses.append(f"{alias}.provider IN ('chatgpt','gemini')")
     if account_id:
         clauses.append(f"{alias}.account_id=?")
         values.append(account_id)
@@ -180,6 +182,8 @@ def daily_series(db_path, timezone_name="UTC", provider="", account_id="") -> li
     clauses, values = [], []
     if provider:
         clauses.append("provider=?"); values.append(provider)
+    else:
+        clauses.append("provider IN ('chatgpt','gemini')")
     if account_id:
         clauses.append("account_id=?"); values.append(account_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""

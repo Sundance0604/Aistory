@@ -192,8 +192,28 @@ def test_topics_skip_wechat_and_inbound_does_not_create_usage_event(tmp_path, mo
     assert result["queued"] == 0
     assert calls == []
     assert _events(settings.database_path) == []
+    assert _events(settings.database_path, "wechat") == []
     refresh_analytics(settings.database_path, settings.timezone, settings.values["analytics"])
     metrics = summary(settings.database_path, provider="wechat")
     assert metrics["total_messages"] == 3
     assert metrics["inbound_messages"] == 3
     assert metrics["outbound_messages"] == 0
+
+
+def test_all_ai_scope_excludes_wechat(tmp_path, monkeypatch):
+    source_dir = tmp_path / "wx"
+    source_dir.mkdir()
+    fake = FakeWeChatDB(source_dir)
+    fake.add_private(1, 2)
+    fake.add_private(3, 1, outbound=True)
+    settings = settings_for(tmp_path, [account("wechat_main", source_dir)])
+    monkeypatch.setattr("gpt_activity.providers.wechat.sync.open_wechat", lambda _path: fake)
+    run_wechat_sync(settings, settings.accounts[0])
+    refresh_analytics(settings.database_path, settings.timezone, settings.values["analytics"])
+
+    assert summary(settings.database_path)["total_messages"] == 0
+    assert summary(settings.database_path, provider="wechat")["total_messages"] == 3
+    assert _events(settings.database_path) == []
+    events = _events(settings.database_path, "wechat")
+    assert len(events) == 1
+    assert events[0]["provider"] == "wechat"

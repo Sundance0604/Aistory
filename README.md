@@ -16,7 +16,7 @@
 - 正确选择当前活动分支，排除放弃的编辑/重新生成分支。
 - 统计提示数、对话数、活跃天数以及输入、输出、总可见 Token。
 - 日、周、月完整可滚动趋势、可点击的年度热力图和按日对话下钻。
-- 物化日统计、对话生命周期分析，以及 ChatGPT / Gemini / 全部平台合并筛选。
+- 物化日统计、对话生命周期分析，以及 ChatGPT / Gemini / 微信 / 全部 AI 筛选；“全部 AI”仅合并 ChatGPT 与 Gemini，不包含微信。
 - 全局使用时长推断：交互 gap 分布、Token 描述性关联、gap-only GMM/HMM、显式边界、异常诊断和模型分歧。
 - 对话搜索、日期和账号筛选、消息与对话排行榜。
 - 使用 DeepSeek 等 OpenAI 兼容接口进行可选的层级主题分类。
@@ -386,7 +386,7 @@ npm run build
 
 当前 Gemini 和物化统计的实现口径见 [docs/gemini_analytics_implementation.md](docs/gemini_analytics_implementation.md)。早期架构路线与未来媒体能力见 [docs/gemini_expansion_plan.md](docs/gemini_expansion_plan.md)。
 
-活动页完整滑动时间窗口、个性化主题词、对话卡片主题标签，以及 ChatGPT 黑白、Gemini 淡蓝白、全部平台绿白视觉主题均已接入。“全部平台”会实际合并对话、提示、Token、活跃天数、时间序列、主题和排行榜。
+活动页完整滑动时间窗口、个性化主题词、对话卡片主题标签，以及 ChatGPT 黑白、Gemini 淡蓝白、全部 AI 绿白视觉主题均已接入。“全部 AI”会合并 ChatGPT 与 Gemini 的对话、提示、Token、活跃天数、时间序列、主题和排行榜，微信数据仅在显式选择 WeChat 时显示。
 
 ## 旧版导出器
 
