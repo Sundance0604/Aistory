@@ -33,7 +33,7 @@ export default function App() {
   const [jobNoticeDismissed, setJobNoticeDismissed] = useState(false)
   useEffect(() => {
     const query = `provider=${provider}`
-    Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&sort=${provider === 'wechat' || !provider ? 'total_messages' : 'total_visible_tokens'}&${query}`)])
+    Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&sort=${provider === 'wechat' ? 'total_messages' : 'total_visible_tokens'}&${query}`)])
       .then(([s, d, c]) => { setSummary(s); setDays(d); setTop(c) })
       .catch((reason) => setError(reason.message))
   }, [provider])

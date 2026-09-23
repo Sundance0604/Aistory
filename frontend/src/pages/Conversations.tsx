@@ -35,7 +35,7 @@ export function Conversations({ provider, onConversation }: { provider: string; 
   })
   const visibleAccounts = accounts.filter(account => !provider || account.provider === provider)
   const isWechat = provider === 'wechat'
-  const messageMode = isWechat || !provider
+  const messageMode = isWechat
   return (
     <div className="page-stack">
       <header className="page-header"><div><span className="eyebrow">本地档案</span><h1>对话</h1></div><p>{filteredRows.length} 条匹配结果</p></header>

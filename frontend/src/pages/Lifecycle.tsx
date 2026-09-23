@@ -9,8 +9,8 @@ export function Lifecycle({ provider, onConversation }: { provider: string; onCo
   const [rows, setRows] = useState<Conversation[]>([])
   const [metric, setMetric] = useState<Metric>('prompts')
   useEffect(() => { api<Conversation[]>(`/api/lifecycle?provider=${provider}`).then(setRows) }, [provider])
-  useEffect(() => { setMetric(provider === 'wechat' || !provider ? 'total_messages' : 'prompts') }, [provider])
-  const availableMetrics: Metric[] = provider === 'wechat' ? ['total_messages','outbound_messages','inbound_messages','active_days','estimated_active_seconds','session_count'] : !provider ? ['total_messages','outbound_messages','active_days','estimated_active_seconds','session_count'] : ['prompts','total_visible_tokens','active_days','estimated_active_seconds','session_count']
+  useEffect(() => { setMetric(provider === 'wechat' ? 'total_messages' : 'prompts') }, [provider])
+  const availableMetrics: Metric[] = provider === 'wechat' ? ['total_messages','outbound_messages','inbound_messages','active_days','estimated_active_seconds','session_count'] : ['prompts','total_visible_tokens','active_days','estimated_active_seconds','session_count']
   const points = useMemo(() => {
     const maxX = Math.max(...rows.map(row => row.calendar_span_days || 0), 1)
     const maxY = Math.max(...rows.map(row => Number(row[metric]) || 0), 1)

@@ -26,7 +26,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
   const [selectedKey, setSelectedKey] = useState<string>()
   const [conversations, setConversations] = useState<DayConversation[]>([])
   const [loadingDay, setLoadingDay] = useState(false)
-  const messageMode = provider === 'wechat' || !provider
+  const messageMode = provider === 'wechat'
   const metricOptions: Metric[] = messageMode ? ['outbound_messages', 'total_messages', 'active_conversations'] : ['prompts', 'total_visible_tokens', 'active_conversations']
   const byDate = useMemo(() => new Map(data.map((item) => [item.date, item])), [data])
   const layout = useMemo(() => {
