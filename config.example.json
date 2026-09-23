@@ -30,6 +30,12 @@
     "recent_refetch_count": 30,
     "retry_delays_seconds": [1, 3, 10]
   },
+  "wechat": {
+    "enabled": true,
+    "sync_private": true,
+    "sync_groups": true,
+    "sync_official_accounts": false
+  },
   "analytics": {
     "session_gap_minutes": 30,
     "single_prompt_minutes": 5,

@@ -10,7 +10,7 @@ from .importer import import_json
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="gpt_activity", description="Local-first ChatGPT activity analytics")
+    parser = argparse.ArgumentParser(prog="gpt_activity", description="Local-first personal digital history analytics")
     parser.add_argument("--config", help="path to the single JSON configuration file")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -26,14 +26,16 @@ def build_parser() -> argparse.ArgumentParser:
     importer.add_argument("--account", default="default", help="owner account id")
     importer.add_argument("--account-name", help="display name when creating the account")
 
-    accounts = commands.add_parser("accounts", help="manage sequential ChatGPT account profiles")
+    accounts = commands.add_parser("accounts", help="manage sequential provider accounts")
     account_commands = accounts.add_subparsers(dest="accounts_command", required=True)
     account_commands.add_parser("list")
     add_account = account_commands.add_parser("add")
     add_account.add_argument("id")
     add_account.add_argument("name")
     add_account.add_argument("--profile")
-    add_account.add_argument("--provider", choices=["chatgpt", "gemini"], default="chatgpt")
+    add_account.add_argument("--provider", choices=["chatgpt", "gemini", "wechat"], default="chatgpt")
+    add_account.add_argument("--alias")
+    add_account.add_argument("--wechat-dir")
 
     commands.add_parser("analyze", help="print deterministic local summary")
 
@@ -83,11 +85,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(settings.accounts, ensure_ascii=False, indent=2))
             return 0
         profile = args.profile or f"browser_profiles/{args.id}"
+        account_payload = {"id": args.id, "name": args.name, "provider": args.provider, "enabled": True}
+        if args.provider == "chatgpt":
+            account_payload["browser_profile"] = profile
+        elif args.provider == "wechat":
+            account_payload.update(alias=args.alias or "", wechat_data_dir=args.wechat_dir or "")
         saved = upsert_account(
             settings,
-            {"id": args.id, "name": args.name, "provider": args.provider, "browser_profile": profile, "enabled": True},
+            account_payload,
         )
-        ensure_account(saved.database_path, args.id, args.name, args.provider)
+        ensure_account(saved.database_path, args.id, args.name, args.provider, alias=args.alias)
         print(json.dumps(saved.account(args.id), ensure_ascii=False, indent=2))
         return 0
     if args.command == "analyze":

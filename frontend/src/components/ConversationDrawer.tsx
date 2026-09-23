@@ -3,6 +3,8 @@ import { X } from 'lucide-react'
 import { api, compact, dateLabel } from '../api'
 import type { ConversationDetail } from '../types'
 
+const messageTime = (value: string | null) => value ? new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—'
+
 export function ConversationDrawer({ conversationId, onClose }: { conversationId?: string; onClose: () => void }) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [error, setError] = useState('')
@@ -30,11 +32,11 @@ export function ConversationDrawer({ conversationId, onClose }: { conversationId
       {!detail && !error && <div className="empty"><p>正在读取对话…</p></div>}
       {error && <div className="empty error"><h3>无法读取对话</h3><p>{error}</p></div>}
       {detail && <>
-        <span className="eyebrow">{detail.account_name} · {detail.provider.toUpperCase()} · {dateLabel(detail.created_at)}</span>
+        <span className="eyebrow">{detail.account_display_name || detail.account_name} · {detail.provider === 'wechat' ? (detail.conversation_type === 'group' ? '群聊' : '私聊') : detail.provider.toUpperCase()} · {dateLabel(detail.created_at)}</span>
         <h2>{detail.title}</h2>
-        <div className="drawer-metrics"><span><b>{compact(detail.prompts)}</b> 提示</span><span><b>{compact(detail.total_visible_tokens)}</b> Token</span></div>
+        <div className="drawer-metrics">{detail.provider === 'wechat' ? <><span><b>{compact(detail.outbound_messages)}</b> 我发送</span><span><b>{compact(detail.inbound_messages)}</b> 收到</span><span><b>{compact(detail.total_messages)}</b> 总消息</span></> : <><span><b>{compact(detail.prompts)}</b> 提示</span><span><b>{compact(detail.total_visible_tokens)}</b> Token</span></>}</div>
         <div className="topic-chips">{detail.topics?.map(topic => <span style={{'--topic-color': topic.color} as React.CSSProperties} key={topic.id}>{topic.name}</span>)}</div>
-        <div className="messages">{detail.messages.filter((message) => message.role === 'user' || message.visible_text).map((message) => <article className={message.role} key={message.id}><header><b>{message.role === 'user' ? '你' : detail.provider === 'gemini' ? 'Gemini' : 'ChatGPT'}</b><span>{compact(message.visible_tokens)} tokens</span></header><p>{message.visible_text || (message.has_attachment ? '［非文本输入/附件］' : '［无可见文本］')}</p></article>)}</div>
+        <div className="messages">{detail.messages.filter((message) => message.role === 'user' || message.visible_text).map((message) => <article className={message.role} key={message.id}><header><b>{detail.provider === 'wechat' ? (message.sender_display_name || (message.direction === 'outbound' ? '我' : detail.title)) : message.role === 'user' ? '你' : detail.provider === 'gemini' ? 'Gemini' : 'ChatGPT'}</b><span>{detail.provider === 'wechat' ? messageTime(message.created_at) : `${compact(message.visible_tokens)} tokens`}</span></header><p>{message.visible_text || (message.has_attachment ? '［非文本输入/附件］' : '［无可见文本］')}</p></article>)}</div>
       </>}
     </aside>
   </div>

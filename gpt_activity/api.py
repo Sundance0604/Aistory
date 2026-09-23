@@ -39,6 +39,7 @@ from .usage_time import (
     usage_sessions,
     usage_summary,
 )
+from .providers import providers
 
 
 JOB_LOCK = threading.Lock()
@@ -109,6 +110,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             configured_account["id"],
             configured_account.get("name") or configured_account["id"],
             configured_account.get("provider") or "chatgpt",
+            alias=configured_account.get("alias"),
         )
     ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
     ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}))
@@ -124,6 +126,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"status": "ok", "version": __version__}
+
+    @app.get("/api/providers")
+    def get_providers():
+        return providers()
 
     @app.get("/api/summary")
     def get_summary(provider: str = "", account_id: str = ""):
@@ -298,10 +304,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "SELECT provider,account_id,COUNT(*) conversations FROM conversations GROUP BY provider,account_id"
                 )
             }
-        return [
-            {**account, "conversations": counts.get((account.get("provider", "chatgpt"), account["id"]), {}).get("conversations", 0)}
-            for account in settings.accounts
-        ]
+            identities = {
+                row["id"]: dict(row)
+                for row in conn.execute("SELECT id,alias,external_user_id FROM accounts")
+            }
+        duplicate_names: dict[tuple[str, str], int] = {}
+        for account in settings.accounts:
+            key = (account.get("provider", "chatgpt"), str(account.get("name") or account["id"]))
+            duplicate_names[key] = duplicate_names.get(key, 0) + 1
+        result = []
+        for account in settings.accounts:
+            provider = account.get("provider", "chatgpt")
+            identity = identities.get(account["id"], {})
+            alias = str(account.get("alias") or identity.get("alias") or "").strip()
+            name = str(account.get("name") or account["id"])
+            external_user_id = identity.get("external_user_id")
+            if alias:
+                display_name = f"{name} · {alias}"
+            elif duplicate_names.get((provider, name), 0) > 1:
+                display_name = f"{name} · …{str(external_user_id or account['id'])[-4:]}"
+            else:
+                display_name = name
+            result.append({
+                **account, "alias": alias, "external_user_id": external_user_id,
+                "display_name": display_name,
+                "conversations": counts.get((provider, account["id"]), {}).get("conversations", 0),
+            })
+        return result
 
     @app.post("/api/accounts")
     def save_account(body: dict[str, Any]):
@@ -312,7 +341,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.values.clear()
         settings.values.update(saved.values)
         account = saved.account(str(body.get("id")))
-        ensure_account(settings.database_path, account["id"], account["name"], account.get("provider") or "chatgpt")
+        ensure_account(
+            settings.database_path, account["id"], account["name"], account.get("provider") or "chatgpt",
+            alias=account.get("alias"),
+        )
         return account
 
     @app.get("/api/data-sources")
@@ -397,11 +429,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.put("/api/settings")
     def update_settings(body: dict[str, Any]):
-        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "gemini": {}, "analytics": {}, "usage_time": {}, "topics": {}, "storage": {}}
+        allowed: dict[str, Any] = {"app": {}, "chatgpt": {}, "gemini": {}, "wechat": {}, "analytics": {}, "usage_time": {}, "topics": {}, "storage": {}}
         keys = {
             "app": {"timezone"},
             "chatgpt": {"browser_channel", "include_files", "stop_on_first_unchanged"},
             "gemini": {"enabled", "secure_1psid", "secure_1psidts", "proxy", "page_size", "read_limit", "recent_refetch_count", "retry_delays_seconds"},
+            "wechat": {"enabled", "sync_private", "sync_groups", "sync_official_accounts"},
             "analytics": {"session_gap_minutes", "single_prompt_minutes", "session_tail_minutes"},
             "usage_time": {"tail_allowance_minutes", "boundary_threshold", "min_model_samples", "random_state"},
             "topics": {"provider", "base_url", "model", "api_key", "preferences"},
@@ -424,6 +457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 configured_account["id"],
                 configured_account.get("name") or configured_account["id"],
                 configured_account.get("provider") or "chatgpt",
+                alias=configured_account.get("alias"),
             )
         ensure_analytics(settings.database_path, settings.timezone, settings.values.get("analytics", {}))
         ensure_usage_time(settings.database_path, settings.values.get("usage_time", {}))

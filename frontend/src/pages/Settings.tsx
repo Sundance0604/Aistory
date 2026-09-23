@@ -4,14 +4,14 @@ import { api } from '../api'
 export function Settings() {
   const [values, setValues] = useState<any>(null)
   const [message, setMessage] = useState('')
-  const [account, setAccount] = useState({ id: '', name: '', provider: 'chatgpt', browser_profile: '' })
+  const [account, setAccount] = useState({ id: '', name: '', provider: 'chatgpt', browser_profile: '', alias: '', wechat_data_dir: '' })
   useEffect(() => { api('/api/settings').then(setValues) }, [])
   if (!values) return <div className="loading">读取设置…</div>
   const save = async () => { setValues(await api('/api/settings', { method: 'PUT', body: JSON.stringify(values) })); setMessage('已保存到本地 JSON 配置') }
   const addAccount = async () => {
     await api('/api/accounts', { method: 'POST', body: JSON.stringify({ ...account, enabled: true }) })
     setValues(await api('/api/settings'))
-    setAccount({ id: '', name: '', provider: 'chatgpt', browser_profile: '' })
+    setAccount({ id: '', name: '', provider: 'chatgpt', browser_profile: '', alias: '', wechat_data_dir: '' })
     setMessage('账号已添加；同步时将按列表顺序依次处理')
   }
   return (
@@ -24,14 +24,22 @@ export function Settings() {
         <label>遇到首个未变化即停止<input type="checkbox" checked={values.chatgpt.stop_on_first_unchanged !== false} onChange={(e) => setValues({ ...values, chatgpt: { ...values.chatgpt, stop_on_first_unchanged: e.target.checked } })} /></label>
       </section>
       <section className="panel form-panel">
-        <h2>账号与浏览器资料</h2>
-        <p className="notice">每个账号使用独立浏览器资料目录。多账号同步不会并发，而是按下列顺序逐个打开、读取和关闭。</p>
-        <div className="account-list">{values.accounts.map((item: any) => <div key={item.id}><b>{item.name}</b><span>{item.provider || 'chatgpt'} · {item.id}</span><code>{item.browser_profile || 'JSON Cookie'}</code></div>)}</div>
+        <h2>账号与 Provider</h2>
+        <p className="notice">每个账号保持独立身份和数据源；多账号同步按列表顺序处理。</p>
+        <div className="account-list">{values.accounts.map((item: any) => <div key={item.id}><b>{item.alias ? `${item.name} · ${item.alias}` : item.name}</b><span>{item.provider || 'chatgpt'} · {item.id}</span><code>{item.wechat_data_dir || item.browser_profile || 'JSON Cookie'}</code></div>)}</div>
         <label>账号 ID<input value={account.id} onChange={(e) => setAccount({ ...account, id: e.target.value })} placeholder="例如 work" /></label>
         <label>显示名称<input value={account.name} onChange={(e) => setAccount({ ...account, name: e.target.value })} placeholder="工作账号" /></label>
-        <label>平台<select value={account.provider} onChange={(e) => setAccount({ ...account, provider: e.target.value })}><option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option></select></label>
-        <label>浏览器资料目录<input value={account.browser_profile} onChange={(e) => setAccount({ ...account, browser_profile: e.target.value })} placeholder="browser_profiles/work" /></label>
+        <label>平台<select value={account.provider} onChange={(e) => setAccount({ ...account, provider: e.target.value })}><option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option><option value="wechat">WeChat</option></select></label>
+        {account.provider === 'chatgpt' && <label>浏览器资料目录<input value={account.browser_profile} onChange={(e) => setAccount({ ...account, browser_profile: e.target.value })} placeholder="browser_profiles/work" /></label>}
+        {account.provider === 'wechat' && <><label>本地别名<input value={account.alias} onChange={(e) => setAccount({ ...account, alias: e.target.value })} placeholder="例如：主号" /></label><label>微信数据库目录<input value={account.wechat_data_dir} onChange={(e) => setAccount({ ...account, wechat_data_dir: e.target.value })} placeholder="D:\wechat\account-main" /></label><p className="privacy-note">保存时只读验证目录和微信账号身份，不会自动同步历史。</p></>}
         <div className="button-row"><button disabled={!account.id || !account.name} onClick={addAccount}>添加或更新账号</button></div>
+      </section>
+      <section className="panel form-panel">
+        <h2>WeChat 读取</h2>
+        <p className="notice">微信数据库仅以只读方式访问；聊天正文只复制到本机 Aistory SQLite，不进入主题分类 API。</p>
+        <label>启用 WeChat<input type="checkbox" checked={values.wechat.enabled !== false} onChange={(e) => setValues({ ...values, wechat: { ...values.wechat, enabled: e.target.checked } })} /></label>
+        <label>同步私聊<input type="checkbox" checked={values.wechat.sync_private !== false} onChange={(e) => setValues({ ...values, wechat: { ...values.wechat, sync_private: e.target.checked } })} /></label>
+        <label>同步群聊<input type="checkbox" checked={values.wechat.sync_groups !== false} onChange={(e) => setValues({ ...values, wechat: { ...values.wechat, sync_groups: e.target.checked } })} /></label>
       </section>
       <section className="panel form-panel">
         <h2>Gemini 读取</h2>

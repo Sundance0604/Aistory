@@ -48,6 +48,12 @@ DEFAULTS: dict[str, Any] = {
         "recent_refetch_count": 30,
         "retry_delays_seconds": [1, 3, 10],
     },
+    "wechat": {
+        "enabled": True,
+        "sync_private": True,
+        "sync_groups": True,
+        "sync_official_accounts": False,
+    },
     "analytics": {
         "version": 1,
         "session_gap_minutes": 30,
@@ -130,6 +136,12 @@ class Settings:
         value = account.get("browser_profile") or self.values["chatgpt"]["browser_profile"]
         return _resolve(self.root, value)
 
+    def wechat_data_dir_for(self, account: dict[str, Any]) -> Path:
+        value = str(account.get("wechat_data_dir") or "").strip()
+        if not value:
+            raise ValueError(f"WeChat account {account.get('id')!r} has no database directory")
+        return _resolve(self.root, value)
+
     @property
     def timezone(self) -> str:
         name = self.values["app"]["timezone"]
@@ -184,17 +196,45 @@ def upsert_account(settings: Settings, account: dict[str, Any]) -> Settings:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", account_id):
         raise ValueError("Account id must use 1-64 letters, numbers, dot, dash, or underscore")
     name = str(account.get("name") or account_id).strip()
-    profile = str(account.get("browser_profile") or f"browser_profiles/{account_id}").strip()
     provider = str(account.get("provider") or "chatgpt").lower()
-    if provider not in {"chatgpt", "gemini"}:
-        raise ValueError("Provider must be chatgpt or gemini")
+    if provider not in {"chatgpt", "gemini", "wechat"}:
+        raise ValueError("Provider must be chatgpt, gemini, or wechat")
     entry = {
         "id": account_id,
         "name": name,
         "provider": provider,
-        "browser_profile": profile,
         "enabled": bool(account.get("enabled", True)),
     }
+    if provider == "chatgpt":
+        entry["browser_profile"] = str(
+            account.get("browser_profile") or f"browser_profiles/{account_id}"
+        ).strip()
+    elif provider == "wechat":
+        alias = str(account.get("alias") or "").strip()
+        data_dir = str(account.get("wechat_data_dir") or "").strip()
+        if not data_dir:
+            raise ValueError("WeChat database directory is required")
+        resolved = _resolve(settings.root, data_dir)
+        if not resolved.is_dir():
+            raise ValueError(f"WeChat database directory does not exist: {resolved}")
+        try:
+            from .providers.wechat.db import open_wechat
+            info = open_wechat(resolved).get_self_info() or {}
+        except Exception as exc:
+            raise ValueError(f"Unable to open WeChat database: {type(exc).__name__}: {exc}") from exc
+        detected_wxid = str(info.get("username") or info.get("wxid") or "").strip()
+        if not detected_wxid:
+            raise ValueError("Unable to read the WeChat account identity from this directory")
+        if settings.database_path.exists():
+            from .db import connect
+            with connect(settings.database_path) as conn:
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
+                bound = conn.execute(
+                    "SELECT external_user_id FROM accounts WHERE id=?", (account_id,)
+                ).fetchone() if "external_user_id" in columns else None
+            if bound and bound["external_user_id"] and bound["external_user_id"] != detected_wxid:
+                raise ValueError("当前数据库目录似乎属于另一个微信账号。")
+        entry.update(alias=alias, wechat_data_dir=data_dir)
     accounts = settings.accounts
     replaced = False
     for index, existing in enumerate(accounts):

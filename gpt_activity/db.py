@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     provider TEXT NOT NULL DEFAULT 'chatgpt',
+    alias TEXT,
+    external_user_id TEXT,
+    metadata_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -41,7 +44,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     model_hint TEXT,
     raw_json_path TEXT,
     source_url TEXT,
-    project_id TEXT
+    project_id TEXT,
+    conversation_type TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
 CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
@@ -63,7 +67,11 @@ CREATE TABLE IF NOT EXISTS messages (
     is_active_branch INTEGER NOT NULL DEFAULT 0,
     has_attachment INTEGER NOT NULL DEFAULT 0,
     analyzable INTEGER NOT NULL DEFAULT 1,
-    raw_metadata_json TEXT
+    raw_metadata_json TEXT,
+    direction TEXT,
+    sender_external_id TEXT,
+    sender_display_name TEXT,
+    raw_type TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
@@ -153,6 +161,7 @@ CREATE TABLE IF NOT EXISTS daily_activity (
     provider TEXT NOT NULL,
     account_id TEXT NOT NULL REFERENCES accounts(id),
     prompts INTEGER NOT NULL DEFAULT 0,
+    turns INTEGER NOT NULL DEFAULT 0,
     prompt_visible_tokens INTEGER NOT NULL DEFAULT 0,
     response_visible_tokens INTEGER NOT NULL DEFAULT 0,
     total_visible_tokens INTEGER NOT NULL DEFAULT 0,
@@ -167,6 +176,7 @@ CREATE TABLE IF NOT EXISTS daily_conversation_activity (
     activity_date TEXT NOT NULL,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     prompts INTEGER NOT NULL DEFAULT 0,
+    turns INTEGER NOT NULL DEFAULT 0,
     prompt_visible_tokens INTEGER NOT NULL DEFAULT 0,
     response_visible_tokens INTEGER NOT NULL DEFAULT 0,
     total_visible_tokens INTEGER NOT NULL DEFAULT 0,
@@ -256,6 +266,15 @@ CREATE TABLE IF NOT EXISTS usage_sessions (
     UNIQUE(run_id, model_family, session_index)
 );
 CREATE INDEX IF NOT EXISTS idx_usage_sessions_run ON usage_sessions(run_id, model_family);
+
+CREATE TABLE IF NOT EXISTS provider_sync_state (
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(provider, account_id, source_id)
+);
 """
 
 
@@ -288,6 +307,9 @@ def migrate(path: str | Path) -> None:
         account_columns = {row["name"] for row in conn.execute("PRAGMA table_info(accounts)")}
         if "provider" not in account_columns:
             conn.execute("ALTER TABLE accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'chatgpt'")
+        for column in ("alias", "external_user_id", "metadata_json"):
+            if column not in account_columns:
+                conn.execute(f"ALTER TABLE accounts ADD COLUMN {column} TEXT")
         conversation_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(conversations)")
         }
@@ -299,10 +321,19 @@ def migrate(path: str | Path) -> None:
             conn.execute("ALTER TABLE conversations ADD COLUMN remote_id TEXT")
         if "provider" not in conversation_columns:
             conn.execute("ALTER TABLE conversations ADD COLUMN provider TEXT NOT NULL DEFAULT 'chatgpt'")
+        if "conversation_type" not in conversation_columns:
+            conn.execute("ALTER TABLE conversations ADD COLUMN conversation_type TEXT")
         conn.execute("UPDATE conversations SET remote_id=id WHERE remote_id IS NULL")
         message_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
         if "analyzable" not in message_columns:
             conn.execute("ALTER TABLE messages ADD COLUMN analyzable INTEGER NOT NULL DEFAULT 1")
+        for column in ("direction", "sender_external_id", "sender_display_name", "raw_type"):
+            if column not in message_columns:
+                conn.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
+        for table in ("daily_activity", "daily_conversation_activity"):
+            columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if "turns" not in columns:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN turns INTEGER NOT NULL DEFAULT 0")
         topic_columns = {row["name"] for row in conn.execute("PRAGMA table_info(topics)")}
         if "color" not in topic_columns:
             conn.execute("ALTER TABLE topics ADD COLUMN color TEXT")
@@ -356,16 +387,31 @@ def migrate(path: str | Path) -> None:
         )
 
 
-def ensure_account(path: str | Path, account_id: str, name: str, provider: str = "chatgpt") -> None:
+def ensure_account(
+    path: str | Path,
+    account_id: str,
+    name: str,
+    provider: str = "chatgpt",
+    *,
+    alias: str | None = None,
+    external_user_id: str | None = None,
+    metadata_json: str | None = None,
+) -> None:
     migrate(path)
     now = datetime.now(timezone.utc).isoformat()
     with connect(path) as conn:
         conn.execute(
             """
-            INSERT INTO accounts(id,name,provider,created_at,updated_at) VALUES(?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET name=excluded.name,provider=excluded.provider,updated_at=excluded.updated_at
+            INSERT INTO accounts(id,name,provider,alias,external_user_id,metadata_json,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name,provider=excluded.provider,
+              alias=COALESCE(excluded.alias,accounts.alias),
+              external_user_id=COALESCE(excluded.external_user_id,accounts.external_user_id),
+              metadata_json=COALESCE(excluded.metadata_json,accounts.metadata_json),
+              updated_at=excluded.updated_at
             """,
-            (account_id, name, provider, now, now),
+            (account_id, name, provider, alias, external_user_id, metadata_json, now, now),
         )
 
 

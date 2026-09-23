@@ -18,7 +18,7 @@ const navigation: [Page, string, typeof LayoutDashboard][] = [
   ['overview', '概览', LayoutDashboard], ['activity', '活动', ActivityIcon], ['usage', '时长', Clock3], ['lifecycle', '生命周期', ChartNoAxesColumn], ['history', '纪录', ChartNoAxesColumn], ['topics', '主题', Tags], ['conversations', '对话', Archive], ['sync', '同步', RefreshCw], ['settings', '设置', SettingsIcon],
 ]
 
-const emptySummary: Summary = { conversations: 0, prompts: 0, prompt_visible_tokens: 0, response_visible_tokens: 0, total_visible_tokens: 0, active_days: 0, first_activity: null, latest_activity: null }
+const emptySummary: Summary = { conversations: 0, prompts: 0, outbound_messages: 0, inbound_messages: 0, total_messages: 0, prompt_visible_tokens: 0, response_visible_tokens: 0, total_visible_tokens: 0, active_days: 0, first_activity: null, latest_activity: null }
 
 export default function App() {
   const [page, setPage] = useState<Page>('overview')
@@ -28,14 +28,16 @@ export default function App() {
   const [conversationId, setConversationId] = useState<string>()
   const [error, setError] = useState('')
   const [provider, setProvider] = useState('')
+  const [providers, setProviders] = useState<{id:string;label:string;supports_topics:boolean}[]>([])
   const [job, setJob] = useState<any>({ status: 'idle' })
   const [jobNoticeDismissed, setJobNoticeDismissed] = useState(false)
   useEffect(() => {
     const query = `provider=${provider}`
-    Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&${query}`)])
+    Promise.all([api<Summary>(`/api/summary?${query}`), api<Day[]>(`/api/activity/daily?${query}`), api<Conversation[]>(`/api/rankings/conversations?limit=10&sort=${provider === 'wechat' || !provider ? 'total_messages' : 'total_visible_tokens'}&${query}`)])
       .then(([s, d, c]) => { setSummary(s); setDays(d); setTop(c) })
       .catch((reason) => setError(reason.message))
   }, [provider])
+  useEffect(() => { api<{id:string;label:string;supports_topics:boolean}[]>('/api/providers').then(setProviders).catch(() => undefined) }, [])
   useEffect(() => {
     const refreshJob = () => api<any>('/api/jobs/status').then(setJob).catch(() => undefined)
     refreshJob()
@@ -59,9 +61,9 @@ export default function App() {
   return (
     <div className={`app-shell theme-${provider || 'all'}`}>
       <aside className="sidebar">
-        <div className="brand"><span>A</span><div><b>Aistory</b><small>LOCAL AI HISTORY</small></div></div>
+        <div className="brand"><span>A</span><div><b>Aistory</b><small>LOCAL DIGITAL HISTORY</small></div></div>
         <nav>{navigation.map(([key, label, Icon]) => <button className={page === key ? 'active' : ''} onClick={() => { setPage(key); setConversationId(undefined) }} key={key}><Icon size={18} /><span>{label}</span></button>)}</nav>
-        <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部</option><option value="chatgpt">ChatGPT</option><option value="gemini">Gemini</option></select></label>
+        <label className="provider-switch"><span>显示平台</span><select value={provider} onChange={event => setProvider(event.target.value)}><option value="">全部</option>{providers.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
         <div className="local-status"><i /><span><b>仅本地</b><small>{summary.conversations} 个对话</small></span></div>
       </aside>
       <main>{error ? <div className="error-banner"><b>无法读取本地 API</b><span>{error}</span></div> : content}</main>

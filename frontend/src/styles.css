@@ -105,6 +105,7 @@ select:focus, input:focus { border-color: #777; box-shadow: 0 0 0 3px #eee; }
 .messages article { border: 1px solid #d9d9d4; border-radius: 9px; padding: 14px 16px; background: #fff; }
 .messages article.user { background: #1a1a1a; color: white; margin-left: 13%; }
 .messages article.assistant { margin-right: 7%; }
+.messages article.system { margin: 0 10%; background: #f3f3ef; color: #777; text-align: center; }
 .messages header { display: flex; justify-content: space-between; font-size: 10px; }
 .messages header span { color: #888; font-family: 'DM Mono'; }
 .messages p { margin: 10px 0 0; white-space: pre-wrap; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
@@ -132,8 +133,9 @@ select:focus, input:focus { border-color: #777; box-shadow: 0 0 0 3px #eee; }
 .day-conversations button:hover { background: var(--surface-tint, #f5f5f2); }.day-conversations div { display: grid; gap: 3px; }.day-conversations small { color: #888; }.day-conversations strong { font: 10px 'DM Mono'; }
 .topic-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--topic-color); }
 .provider-switch { margin-top: 22px; display: grid; gap: 5px; padding: 0 8px; color: #888; font: 9px 'DM Mono'; }.provider-switch select { width: 100%; background: #222; color: #ddd; border-color: #444; }
-.theme-chatgpt { --accent:#171717; --surface-tint:#efefec; --heat-0:#f0f0ed;--heat-1:#d2d2cd;--heat-2:#9c9c97;--heat-3:#585855;--heat-4:#151515; }.theme-gemini { --accent:#5f91b5; --surface-tint:#edf6fb; --heat-0:#edf6fb;--heat-1:#cfe4f2;--heat-2:#9ec6df;--heat-3:#5c91b5;--heat-4:#1f5f89; background:#f3f9fc; }.theme-all { --accent:#608b72; --surface-tint:#edf6f0; --heat-0:#edf6f0;--heat-1:#cfe5d6;--heat-2:#9ac6a8;--heat-3:#578868;--heat-4:#245b38; background:#f2f8f4; }
+.theme-chatgpt { --accent:#171717; --surface-tint:#efefec; --heat-0:#f0f0ed;--heat-1:#d2d2cd;--heat-2:#9c9c97;--heat-3:#585855;--heat-4:#151515; }.theme-gemini { --accent:#5f91b5; --surface-tint:#edf6fb; --heat-0:#edf6fb;--heat-1:#cfe4f2;--heat-2:#9ec6df;--heat-3:#5c91b5;--heat-4:#1f5f89; background:#f3f9fc; }.theme-wechat { --accent:#3f9270; --surface-tint:#edf8f3; --heat-0:#edf8f3;--heat-1:#cae9db;--heat-2:#8fcdb1;--heat-3:#4c9d78;--heat-4:#17613f; background:#f3faf6; }.theme-all { --accent:#608b72; --surface-tint:#edf6f0; --heat-0:#edf6f0;--heat-1:#cfe5d6;--heat-2:#9ac6a8;--heat-3:#578868;--heat-4:#245b38; background:#f2f8f4; }
 .theme-gemini .sidebar { background:#eaf4fa; color:#163247; }.theme-gemini .sidebar nav button:hover { background:#dcecf5; color:#17364b; }.theme-gemini .sidebar nav button.active { background:#fff; color:#17364b; }
+.theme-wechat .sidebar { background:#e6f4ed; color:#173d2d; }.theme-wechat .sidebar nav button:hover { background:#d6ebdf; color:#173d2d; }.theme-wechat .sidebar nav button.active { background:#fff; color:#173d2d; }
 .theme-all .sidebar { background:#e7f2ea; color:#183a27; }.theme-all .sidebar nav button:hover { background:#d9eadf; color:#183a27; }.theme-all .sidebar nav button.active { background:#fff; color:#183a27; }
 .lifecycle-scroll { width:100%;overflow-x:auto;contain:inline-size; }.lifecycle-chart { min-width:760px; width:100%; max-width:none; }.lifecycle-chart line { stroke:#d8d8d2; }.lifecycle-chart text { fill:#888; font:10px 'DM Mono'; }.lifecycle-chart circle,.lifecycle-chart rect { cursor:pointer; stroke:#fff; stroke-width:1.5; }
 .chart-legend { display:flex;gap:18px;justify-content:flex-end;color:#777;font-size:10px; }.chart-legend span { display:flex;gap:6px;align-items:center; }.shape { width:8px;height:8px;background:#888;display:inline-block }.shape.circle{border-radius:50%}.shape.square{border-radius:2px}

@@ -251,13 +251,15 @@ def run_sync(
     accounts = [
         account
         for account in settings.accounts
-        if account.get("enabled", True) and (not requested or account["id"] in requested)
+        if account.get("enabled", True)
+        and not (account.get("provider") == "wechat" and settings.values.get("wechat", {}).get("enabled") is False)
+        and (not requested or account["id"] in requested)
     ]
     missing = requested - {account["id"] for account in accounts}
     if missing:
         raise ValueError(f"Unknown or disabled account(s): {', '.join(sorted(missing))}")
     if not accounts:
-        raise ValueError("No enabled ChatGPT accounts are configured")
+        raise ValueError("No enabled accounts are configured")
 
     totals = {
         "index_items_seen": 0,
@@ -272,7 +274,8 @@ def run_sync(
     # Browser profiles cannot be opened concurrently. Accounts are deliberately
     # synchronized one after another in configuration order.
     for account in accounts:
-        if account.get("provider", "chatgpt") == "gemini":
+        provider = account.get("provider", "chatgpt")
+        if provider == "gemini":
             from .gemini import run_gemini_sync
             try:
                 gemini = run_gemini_sync(settings, account, force_fetch=force_fetch)
@@ -291,6 +294,26 @@ def run_sync(
                     "account_id": account["id"], "account_name": account.get("name") or account["id"],
                     "provider": "gemini", "status": "failed", "error": f"{type(exc).__name__}: {exc}",
                     **{key: 0 for key in totals}, "failed_cids": [], "failures": [],
+                }
+        elif provider == "wechat":
+            from .providers.wechat import run_wechat_sync
+            try:
+                wechat = run_wechat_sync(settings, account, force_fetch=force_fetch)
+                result = {
+                    "account_id": account["id"], "account_name": account.get("name") or account["id"],
+                    "provider": "wechat", "status": "partial" if wechat["failed"] else "complete",
+                    "error": None, "external_user_id": wechat["self_wxid"],
+                    "index_items_seen": wechat["discovered"],
+                    "new_conversations": wechat["new"], "updated_conversations": wechat["updated"],
+                    "unchanged_conversations": wechat["unchanged"], "fetched_conversations": wechat["new"] + wechat["updated"],
+                    "failed_conversations": wechat["failed"], "new_messages": wechat["messages"],
+                    "failures": wechat["failures"],
+                }
+            except Exception as exc:
+                result = {
+                    "account_id": account["id"], "account_name": account.get("name") or account["id"],
+                    "provider": "wechat", "status": "failed", "error": f"{type(exc).__name__}: {exc}",
+                    **{key: 0 for key in totals}, "failures": [],
                 }
         else:
             result = _sync_account(

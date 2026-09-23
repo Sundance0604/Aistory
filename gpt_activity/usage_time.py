@@ -41,11 +41,13 @@ def _events(db_path) -> list[dict[str, Any]]:
     with connect(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT m.id,m.conversation_id,m.role,m.created_at,m.visible_tokens,m.sequence_index,
+            SELECT m.id,m.conversation_id,m.role,m.direction,m.created_at,m.visible_tokens,m.sequence_index,
                    c.account_id,c.provider
             FROM messages m JOIN conversations c ON c.id=m.conversation_id
             WHERE m.is_active_branch=1 AND m.role IN ('user','assistant')
-            ORDER BY m.conversation_id,COALESCE(m.sequence_index,2147483647),m.created_at,m.id
+            ORDER BY m.conversation_id,
+              CASE WHEN c.provider='wechat' THEN m.created_at ELSE '' END,
+              COALESCE(m.sequence_index,2147483647),m.created_at,m.id
             """
         ).fetchall()
     grouped: dict[str, list[Any]] = defaultdict(list)
@@ -54,13 +56,17 @@ def _events(db_path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for conversation_rows in grouped.values():
         for index, row in enumerate(conversation_rows):
-            if row["role"] != "user" or not row["created_at"]:
+            is_anchor = row["direction"] == "outbound" if row["provider"] == "wechat" else row["role"] == "user"
+            if not is_anchor or not row["created_at"]:
                 continue
             output_tokens = 0
             for following in conversation_rows[index + 1 :]:
-                if following["role"] == "user":
+                following_anchor = following["direction"] == "outbound" if row["provider"] == "wechat" else following["role"] == "user"
+                if following_anchor:
                     break
-                if following["role"] == "assistant":
+                if (row["provider"] == "wechat" and following["direction"] == "inbound") or (
+                    row["provider"] != "wechat" and following["role"] == "assistant"
+                ):
                     output_tokens += int(following["visible_tokens"] or 0)
             stamp = _iso(row["created_at"])
             events.append({

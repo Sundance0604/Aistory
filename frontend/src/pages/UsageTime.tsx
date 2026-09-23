@@ -20,7 +20,7 @@ function shortDuration(seconds?: number | null) {
 
 function Histogram({ rows }: { rows: any[] }) {
   const max = Math.max(...rows.map(row => row.count), 1)
-  return <div className="usage-chart-scroll"><svg className="usage-histogram" viewBox="0 0 900 230" role="img" aria-label="提示间隔的对数分布">
+  return <div className="usage-chart-scroll"><svg className="usage-histogram" viewBox="0 0 900 230" role="img" aria-label="主动事件间隔的对数分布">
     <line x1="38" y1="190" x2="880" y2="190" />
     {rows.map((row, index) => { const width = 842 / Math.max(rows.length, 1), height = row.count / max * 160; return <rect key={index} x={38 + index * width} y={190 - height} width={Math.max(2, width - 2)} height={height}><title>{shortDuration(row.seconds_start)}–{shortDuration(row.seconds_end)}：{row.count}</title></rect> })}
     <text x="38" y="218">短间隔</text><text x="810" y="218">长间隔</text>
@@ -65,7 +65,7 @@ export function UsageTime() {
   if(!data)return <div className="page-stack"><div className="empty">正在读取已保存的时长模型…</div></div>
   const {summary,distribution,associations,gmm,hmm}=data, enough=summary.status==='complete', matrix=summary.confusion_matrix||{}
   return <div className="page-stack usage-time">
-    <header className="page-header"><div><span className="eyebrow">Interaction Rhythm & Session Inference</span><h1>使用时长</h1></div><p>从交互时间戳推断间隔状态与 Session 边界；结果是模型设定下的估计，不是真实持续操作时长。</p></header>
+    <header className="page-header"><div><span className="eyebrow">Interaction Rhythm & Session Inference</span><h1>估算数字活跃时间</h1></div><p>从各平台主动事件时间戳推断间隔状态与 Session 边界；微信只使用本人发送消息作为强活动锚点。结果不是真实持续操作时长。</p></header>
 
     <section className="panel"><div className="panel-heading"><div><span className="eyebrow">01 · Observed</span><h2>原始行为</h2></div></div><div className="usage-metrics"><div><span>用户事件</span><b>{number.format(summary.user_events||0)}</b></div><div><span>相邻间隔</span><b>{number.format(summary.sample_count||0)}</b></div><div><span>时间范围</span><b>{dateLabel(summary.first_event)} → {dateLabel(summary.last_event)}</b></div><div><span>覆盖平台 / 账号</span><b>{(summary.platforms||[]).join(' + ')||'—'} · {(summary.accounts||[]).length}</b></div></div></section>
 
@@ -89,7 +89,7 @@ export function UsageTime() {
 
       <section className="panel"><div className="panel-heading"><div><span className="eyebrow">10 · Boundary timeline</span><h2>事件间隔与边界</h2></div><div className="segmented"><button className={timeline==='gmm'?'active':''} onClick={()=>setTimeline('gmm')}>GMM</button><button className={timeline==='hmm'?'active':''} onClick={()=>setTimeline('hmm')}>HMM</button><button className={timeline==='compare'?'active':''} onClick={()=>setTimeline('compare')}>比较</button></div></div><div className="boundary-timeline">{timeline!=='hmm'&&<BoundaryTimeline rows={data.boundaries} model="gmm"/>}{timeline!=='gmm'&&<BoundaryTimeline rows={data.boundaries} model="hmm"/>}</div><p className="privacy-note">显示最近 {data.boundaries.length} 个 gap。每格代表两个事件之间的间隔，粗边框为 Session 边界，红色标记为模型分歧；不再用连续长条暗示持续操作。</p></section>
 
-      <section className="panel estimate-panel"><div className="panel-heading"><div><span className="eyebrow">11 · Model-implied</span><h2>推断的 Session 使用时长</h2></div><span className="quality-badge">Session 尾部余量：{Math.round(summary.tail_allowance_seconds/60)} 分钟</span></div><div className="estimate-grid"><div><span>GMM model-implied</span><b>{duration(gmm.estimated_usage_seconds)}</b><small>{gmm.sessions} sessions · 原始 span {duration(gmm.session_span_seconds)}</small></div><div><span>HMM model-implied</span><b>{duration(hmm.estimated_usage_seconds)}</b><small>{hmm.sessions} sessions · 原始 span {duration(hmm.session_span_seconds)}</small></div></div><p className="notice">模型设定敏感性范围：{duration(Math.min(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))} – {duration(Math.max(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))}。该结果根据交互时间戳与 Session 边界推断得到，不等同于真实持续注视屏幕或连续操作 AI 的时间，也不是统计置信区间。</p></section>
+      <section className="panel estimate-panel"><div className="panel-heading"><div><span className="eyebrow">11 · Model-implied</span><h2>估算聊天与数字活跃时间</h2></div><span className="quality-badge">Session 尾部余量：{Math.round(summary.tail_allowance_seconds/60)} 分钟</span></div><div className="estimate-grid"><div><span>GMM model-implied</span><b>{duration(gmm.estimated_usage_seconds)}</b><small>{gmm.sessions} sessions · 原始 span {duration(gmm.session_span_seconds)}</small></div><div><span>HMM model-implied</span><b>{duration(hmm.estimated_usage_seconds)}</b><small>{hmm.sessions} sessions · 原始 span {duration(hmm.session_span_seconds)}</small></div></div><p className="notice">模型设定敏感性范围：{duration(Math.min(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))} – {duration(Math.max(gmm.estimated_usage_seconds,hmm.estimated_usage_seconds))}。该结果根据交互时间戳与 Session 边界推断得到，不等同于真实持续注视屏幕或连续操作平台的时间，也不是统计置信区间。</p></section>
 
       <p className="privacy-note provenance">模型 {summary.model_version} · 训练于 {dateLabel(summary.trained_at)} · {summary.sample_count} 个样本 · 核心特征 log1p(gap) + z-score · 边界阈值 {summary.boundary_threshold.toFixed(2)} · 所有平台全局时间线</p>
     </>}

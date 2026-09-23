@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react'
 import type { Day, DayConversation } from '../types'
 import { api, compact, number } from '../api'
 
-type Metric = 'prompts' | 'total_visible_tokens' | 'active_conversations'
+type Metric = 'prompts' | 'outbound_messages' | 'total_messages' | 'total_visible_tokens' | 'active_conversations'
 
 const labels: Record<Metric, string> = {
   prompts: '提示数',
+  outbound_messages: '主动事件',
+  total_messages: '总事件',
   total_visible_tokens: '可见 Token',
   active_conversations: '活跃对话',
 }
@@ -24,6 +26,8 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
   const [selectedKey, setSelectedKey] = useState<string>()
   const [conversations, setConversations] = useState<DayConversation[]>([])
   const [loadingDay, setLoadingDay] = useState(false)
+  const messageMode = provider === 'wechat' || !provider
+  const metricOptions: Metric[] = messageMode ? ['outbound_messages', 'total_messages', 'active_conversations'] : ['prompts', 'total_visible_tokens', 'active_conversations']
   const byDate = useMemo(() => new Map(data.map((item) => [item.date, item])), [data])
   const layout = useMemo(() => {
     const start = new Date(year, 0, 1)
@@ -66,6 +70,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
     setSelectedKey(undefined)
     setConversations([])
   }, [data, provider, availableYears, year])
+  useEffect(() => { setMetric(messageMode ? 'outbound_messages' : 'prompts') }, [messageMode])
 
   const selectDay = async (key: string) => {
     setSelectedKey(key)
@@ -87,8 +92,8 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
         </div>
         <div className="controls">
           <div className="segmented">
-            {(Object.keys(labels) as Metric[]).map((key) => (
-              <button className={metric === key ? 'active' : ''} onClick={() => setMetric(key)} key={key}>{labels[key]}</button>
+            {metricOptions.map((key) => (
+              <button className={metric === key ? 'active' : ''} onClick={() => setMetric(key)} key={key}>{provider === 'wechat' && key === 'outbound_messages' ? '我发送' : labels[key]}</button>
             ))}
           </div>
           <select value={year} onChange={(event) => setYear(Number(event.target.value))}>
@@ -105,7 +110,7 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
             const value = Number(item?.[metric] || 0)
             const muted = cell.date.getFullYear() !== year
             const title = item
-              ? `${cell.key}\n${number.format(item.prompts)} 个提示\n${number.format(item.prompt_visible_tokens)} 输入可见 Token\n${number.format(item.response_visible_tokens)} 输出可见 Token\n${number.format(item.total_visible_tokens)} 总可见 Token\n${number.format(item.active_conversations)} 个活跃对话`
+              ? messageMode ? `${cell.key}\n${number.format(item.outbound_messages)} 主动事件\n${number.format(item.inbound_messages)} 响应事件\n${number.format(item.total_messages)} 总事件\n${number.format(item.active_conversations)} 个活跃对话` : `${cell.key}\n${number.format(item.prompts)} 个提示\n${number.format(item.prompt_visible_tokens)} 输入可见 Token\n${number.format(item.response_visible_tokens)} 输出可见 Token\n${number.format(item.total_visible_tokens)} 总可见 Token\n${number.format(item.active_conversations)} 个活跃对话`
               : `${cell.key}\n无活动`
             return (
               <rect
@@ -126,8 +131,8 @@ export function ActivityHeatmap({ data, provider = '', onDay, onConversation }: 
         </svg>
       </div>
       <div className="legend"><span>少</span>{[0, 1, 2, 3, 4].map((item) => <i className={`level-${item}`} key={item} />)}<span>多</span><b>非零天按四分位分档</b></div>
-      {selected && <div className="day-detail"><div><span className="eyebrow">所选日期</span><b>{selected.date}</b></div><div><strong>{number.format(selected.prompts)}</strong><span>提示</span></div><div><strong>{number.format(selected.total_visible_tokens)}</strong><span>总可见 Token</span></div><div><strong>{number.format(selected.prompt_visible_tokens)}</strong><span>输入</span></div><div><strong>{number.format(selected.response_visible_tokens)}</strong><span>输出</span></div></div>}
-      {selected && <div className="heatmap-day-conversations"><div className="day-list-heading"><span className="eyebrow">当日进行的对话</span><b>{loadingDay ? '读取中…' : `${conversations.length} 个对话`}</b></div><div className="day-conversations">{conversations.map(row => <button onClick={() => onConversation?.(row.id)} key={row.id} style={{'--topic-color': row.topic_color || 'var(--accent)'} as React.CSSProperties}><span className="topic-dot"/><div><b>{row.title}</b><small>{row.account_name} · {row.provider.toUpperCase()} · {row.dominant_topic || '未分类'}</small></div><strong>{compact(row.prompts)} 提示 · {compact(row.total_visible_tokens)} Token</strong></button>)}</div></div>}
+      {selected && <div className="day-detail"><div><span className="eyebrow">所选日期</span><b>{selected.date}</b></div>{messageMode ? <><div><strong>{number.format(selected.outbound_messages)}</strong><span>{provider === 'wechat' ? '我发送' : '主动事件'}</span></div><div><strong>{number.format(selected.inbound_messages)}</strong><span>{provider === 'wechat' ? '收到' : '响应事件'}</span></div><div><strong>{number.format(selected.total_messages)}</strong><span>总事件</span></div></> : <><div><strong>{number.format(selected.prompts)}</strong><span>提示</span></div><div><strong>{number.format(selected.total_visible_tokens)}</strong><span>总可见 Token</span></div><div><strong>{number.format(selected.prompt_visible_tokens)}</strong><span>输入</span></div><div><strong>{number.format(selected.response_visible_tokens)}</strong><span>输出</span></div></>}</div>}
+      {selected && <div className="heatmap-day-conversations"><div className="day-list-heading"><span className="eyebrow">当日进行的对话</span><b>{loadingDay ? '读取中…' : `${conversations.length} 个对话`}</b></div><div className="day-conversations">{conversations.map(row => <button onClick={() => onConversation?.(row.id)} key={row.id} style={{'--topic-color': row.provider === 'wechat' ? (row.conversation_type === 'group' ? '#8E7FA6' : '#6D9AA3') : row.topic_color || 'var(--accent)'} as React.CSSProperties}><span className="topic-dot"/><div><b>{row.title}</b><small>{row.account_display_name || row.account_name} · {row.provider === 'wechat' ? (row.conversation_type === 'group' ? '群聊' : '私聊') : `${row.provider.toUpperCase()} · ${row.dominant_topic || '未分类'}`}</small></div><strong>{row.provider === 'wechat' ? `${compact(row.outbound_messages)} 我发送 · ${compact(row.total_messages)} 消息` : `${compact(row.prompts)} 提示 · ${compact(row.total_visible_tokens)} Token`}</strong></button>)}</div></div>}
     </section>
   )
 }

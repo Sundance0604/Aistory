@@ -204,6 +204,7 @@ def classify_prompts(
             SELECT m.id,m.conversation_id,m.sequence_index,m.visible_text,c.title
             FROM messages m JOIN conversations c ON c.id=m.conversation_id
             WHERE m.is_active_branch=1 AND m.role='user' AND m.analyzable=1
+              AND c.provider IN ('chatgpt','gemini')
               AND trim(m.visible_text)<>'' {where}
             ORDER BY m.created_at,m.conversation_id,m.sequence_index
         """
@@ -368,7 +369,8 @@ def topic_distribution(db_path, level: int = 1, provider: str = "", account_id: 
         scope = " AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)"
         prompt_rows = [dict(row) for row in conn.execute(
             "SELECT m.id,m.conversation_id,m.sequence_index,m.visible_tokens FROM messages m "
-            "JOIN conversations c ON c.id=m.conversation_id WHERE m.is_active_branch=1 AND m.role='user'" + scope,
+            "JOIN conversations c ON c.id=m.conversation_id WHERE m.is_active_branch=1 AND m.role='user' "
+            "AND c.provider IN ('chatgpt','gemini')" + scope,
             (provider, provider, account_id, account_id),
         )]
         turn_tokens = {row["id"]: _turn_tokens(conn, row) for row in prompt_rows}
@@ -378,7 +380,8 @@ def topic_distribution(db_path, level: int = 1, provider: str = "", account_id: 
             FROM message_topics mt JOIN topics t ON t.id=mt.topic_id
             LEFT JOIN topics p ON p.id=t.parent_id
             JOIN messages m ON m.id=mt.message_id JOIN conversations c ON c.id=m.conversation_id
-            WHERE (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
+            WHERE c.provider IN ('chatgpt','gemini')
+              AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
             """
             , (provider, provider, account_id, account_id)).fetchall()
         totals: dict[int, dict[str, Any]] = {}
@@ -408,7 +411,8 @@ def topic_timeline(db_path, timezone_name: str, provider: str = "", account_id: 
             FROM message_topics mt JOIN messages m ON m.id=mt.message_id
             JOIN conversations c ON c.id=m.conversation_id
             JOIN topics t ON t.id=mt.topic_id LEFT JOIN topics p ON p.id=t.parent_id
-            WHERE m.created_at IS NOT NULL AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
+            WHERE m.created_at IS NOT NULL AND c.provider IN ('chatgpt','gemini')
+              AND (?='' OR c.provider=?) AND (?='' OR c.account_id=?)
             """
             , (provider, provider, account_id, account_id)).fetchall()
         totals: dict[tuple[str, int], dict[str, Any]] = {}

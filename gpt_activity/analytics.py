@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .db import connect
 
-ANALYTICS_VERSION = 1
+ANALYTICS_VERSION = 2
 
 
 def _local_date(timestamp: str | None, timezone_name: str) -> str | None:
@@ -61,8 +61,9 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
         for conversation in conversations:
             rows = grouped.get(conversation["id"], [])
             prompts = [row for row in rows if row["role"] == "user"]
+            lifecycle_rows = rows if conversation["provider"] == "wechat" else prompts
             prompt_times = [datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")) for row in prompts]
-            days = {_local_date(row["created_at"], timezone_name) for row in prompts} - {None}
+            days = {_local_date(row["created_at"], timezone_name) for row in lifecycle_rows} - {None}
             sessions: list[list[datetime]] = []
             for stamp in prompt_times:
                 if not sessions or (stamp - sessions[-1][-1]).total_seconds() > gap_seconds:
@@ -74,8 +75,8 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
                 single_seconds if len(session) == 1 else int((session[-1] - session[0]).total_seconds()) + tail_seconds
                 for session in sessions
             )
-            first = prompts[0]["created_at"] if prompts else None
-            last = prompts[-1]["created_at"] if prompts else None
+            first = lifecycle_rows[0]["created_at"] if lifecycle_rows else None
+            last = lifecycle_rows[-1]["created_at"] if lifecycle_rows else None
             calendar_span = (datetime.fromisoformat(_local_date(last, timezone_name)) - datetime.fromisoformat(_local_date(first, timezone_name))).days + 1 if first and last else 0
             prompt_tokens = sum(row["visible_tokens"] or 0 for row in prompts)
             response_tokens = sum(row["visible_tokens"] or 0 for row in rows if row["role"] == "assistant")
@@ -91,10 +92,11 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
                     continue
                 key = (day, conversation["id"])
                 item = daily_conversations.setdefault(key, {
-                    "prompts": 0, "prompt_visible_tokens": 0, "response_visible_tokens": 0,
+                    "prompts": 0, "turns": 0, "prompt_visible_tokens": 0, "response_visible_tokens": 0,
                     "total_visible_tokens": 0, "first_activity": row["created_at"], "last_activity": row["created_at"],
                 })
                 tokens = row["visible_tokens"] or 0
+                item["turns"] += 1
                 item["total_visible_tokens"] += tokens
                 if row["role"] == "user":
                     item["prompts"] += 1
@@ -106,8 +108,11 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
 
         for (day, conversation_id), item in daily_conversations.items():
             conn.execute(
-                "INSERT INTO daily_conversation_activity VALUES(?,?,?,?,?,?,?,?)",
-                (day, conversation_id, item["prompts"], item["prompt_visible_tokens"],
+                """INSERT INTO daily_conversation_activity(
+                     activity_date,conversation_id,prompts,turns,prompt_visible_tokens,
+                     response_visible_tokens,total_visible_tokens,first_activity,last_activity
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (day, conversation_id, item["prompts"], item["turns"], item["prompt_visible_tokens"],
                  item["response_visible_tokens"], item["total_visible_tokens"], item["first_activity"], item["last_activity"]),
             )
 
@@ -115,9 +120,9 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
         for (day, conversation_id), item in daily_conversations.items():
             conversation = by_id[conversation_id]
             target = daily[(day, conversation["provider"], conversation["account_id"])]
-            for field in ("prompts", "prompt_visible_tokens", "response_visible_tokens", "total_visible_tokens"):
+            for field in ("prompts", "turns", "prompt_visible_tokens", "response_visible_tokens", "total_visible_tokens"):
                 target[field] += item[field]
-            if item["prompts"]:
+            if item["turns"] if conversation["provider"] == "wechat" else item["prompts"]:
                 target["active_conversations"] += 1
         for conversation in conversations:
             day = _local_date(conversation["created_at"], timezone_name)
@@ -125,8 +130,11 @@ def refresh_analytics(db_path, timezone_name: str, config: dict[str, Any]) -> di
                 daily[(day, conversation["provider"], conversation["account_id"])]["new_conversations"] += 1
         for (day, provider, account_id), item in daily.items():
             conn.execute(
-                "INSERT INTO daily_activity VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (day, provider, account_id, item["prompts"], item["prompt_visible_tokens"],
+                """INSERT INTO daily_activity(
+                     activity_date,provider,account_id,prompts,turns,prompt_visible_tokens,
+                     response_visible_tokens,total_visible_tokens,active_conversations,new_conversations,computed_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (day, provider, account_id, item["prompts"], item["turns"], item["prompt_visible_tokens"],
                  item["response_visible_tokens"], item["total_visible_tokens"], item["active_conversations"],
                  item["new_conversations"], computed_at),
             )
@@ -151,6 +159,9 @@ def summary(db_path, timezone_name="UTC", provider="", account_id="") -> dict[st
     with connect(db_path) as conn:
         row = conn.execute(
             f"""SELECT COUNT(*) conversations,COALESCE(SUM(s.prompts),0) prompts,
+            COALESCE(SUM(s.prompts),0) outbound_messages,
+            COALESCE(SUM(s.turns-s.prompts),0) inbound_messages,
+            COALESCE(SUM(s.turns),0) total_messages,
             COALESCE(SUM(s.prompt_visible_tokens),0) prompt_visible_tokens,
             COALESCE(SUM(s.response_visible_tokens),0) response_visible_tokens,
             COALESCE(SUM(s.total_visible_tokens),0) total_visible_tokens,
@@ -159,7 +170,8 @@ def summary(db_path, timezone_name="UTC", provider="", account_id="") -> dict[st
         ).fetchone()
         active = conn.execute(
             f"SELECT COUNT(DISTINCT d.activity_date) n FROM daily_conversation_activity d "
-            f"JOIN conversations c ON c.id=d.conversation_id WHERE d.prompts>0 {where}", values
+            f"JOIN conversations c ON c.id=d.conversation_id "
+            f"WHERE ((c.provider='wechat' AND d.turns>0) OR (c.provider<>'wechat' AND d.prompts>0)) {where}", values
         ).fetchone()["n"]
     return {**dict(row), "active_days": active}
 
@@ -173,7 +185,9 @@ def daily_series(db_path, timezone_name="UTC", provider="", account_id="") -> li
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with connect(db_path) as conn:
         rows = conn.execute(
-            f"""SELECT activity_date date,SUM(prompts) prompts,SUM(prompt_visible_tokens) prompt_visible_tokens,
+            f"""SELECT activity_date date,SUM(prompts) prompts,SUM(turns) turns,
+            SUM(prompts) outbound_messages,SUM(turns-prompts) inbound_messages,SUM(turns) total_messages,
+            SUM(prompt_visible_tokens) prompt_visible_tokens,
             SUM(response_visible_tokens) response_visible_tokens,SUM(total_visible_tokens) total_visible_tokens,
             SUM(active_conversations) active_conversations,SUM(new_conversations) new_conversations
             FROM daily_activity {where} GROUP BY activity_date ORDER BY activity_date""", values
@@ -187,7 +201,7 @@ def aggregate_series(db_path, timezone_name, granularity, provider="", account_i
     if granularity not in {"weekly", "monthly"}:
         raise ValueError("granularity must be daily, weekly, or monthly")
     grouped: dict[str, dict[str, Any]] = {}
-    metrics = ("prompts", "prompt_visible_tokens", "response_visible_tokens", "total_visible_tokens", "active_conversations", "new_conversations")
+    metrics = ("prompts", "turns", "outbound_messages", "inbound_messages", "total_messages", "prompt_visible_tokens", "response_visible_tokens", "total_visible_tokens", "active_conversations", "new_conversations")
     for row in daily_series(db_path, timezone_name, provider, account_id):
         date = datetime.fromisoformat(row["date"])
         key = f"{date.isocalendar().year}-W{date.isocalendar().week:02d}" if granularity == "weekly" else row["date"][:7]
@@ -198,7 +212,8 @@ def aggregate_series(db_path, timezone_name, granularity, provider="", account_i
     with connect(db_path) as conn:
         rows = conn.execute(
             f"SELECT d.activity_date,d.conversation_id FROM daily_conversation_activity d "
-            f"JOIN conversations c ON c.id=d.conversation_id WHERE d.prompts>0 {where}", values
+            f"JOIN conversations c ON c.id=d.conversation_id "
+            f"WHERE ((c.provider='wechat' AND d.turns>0) OR (c.provider<>'wechat' AND d.prompts>0)) {where}", values
         ).fetchall()
     unique: dict[str, set[str]] = defaultdict(set)
     for row in rows:
@@ -210,7 +225,7 @@ def aggregate_series(db_path, timezone_name, granularity, provider="", account_i
     return [grouped[key] for key in sorted(grouped)]
 
 
-SORT_EXPRESSIONS = {"total_visible_tokens":"s.total_visible_tokens","prompt_visible_tokens":"s.prompt_visible_tokens","response_visible_tokens":"s.response_visible_tokens","prompts":"s.prompts","turns":"s.turns","created_at":"c.created_at","updated_at":"c.updated_at"}
+SORT_EXPRESSIONS = {"total_visible_tokens":"s.total_visible_tokens","prompt_visible_tokens":"s.prompt_visible_tokens","response_visible_tokens":"s.response_visible_tokens","prompts":"s.prompts","turns":"s.turns","total_messages":"s.turns","outbound_messages":"s.prompts","inbound_messages":"(s.turns-s.prompts)","active_days":"s.active_days","calendar_span_days":"s.calendar_span_days","session_count":"s.session_count","estimated_active_seconds":"s.estimated_active_seconds","created_at":"c.created_at","updated_at":"c.updated_at"}
 
 
 def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset=0, search="", account_id="", provider="", topic_id=0):
@@ -227,9 +242,16 @@ def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset
     """
     with connect(db_path) as conn:
         rows = conn.execute(
-            f"""SELECT c.id,c.provider,c.account_id,a.name account_name,c.title,c.created_at,c.updated_at,c.model_hint,
+            f"""SELECT c.id,c.provider,c.account_id,a.name account_name,a.alias account_alias,
+            CASE WHEN a.alias IS NOT NULL AND trim(a.alias)<>'' THEN a.name || ' · ' || a.alias
+                 WHEN (SELECT COUNT(*) FROM accounts ax WHERE ax.provider=a.provider AND ax.name=a.name)>1
+                 THEN a.name || ' · …' || substr(COALESCE(a.external_user_id,a.id),-4)
+                 ELSE a.name END account_display_name,
+            c.title,c.created_at,c.updated_at,c.model_hint,c.conversation_type,
             COALESCE(s.prompts,0) prompts,COALESCE(s.turns,0) turns,COALESCE(s.prompt_visible_tokens,0) prompt_visible_tokens,
             COALESCE(s.response_visible_tokens,0) response_visible_tokens,COALESCE(s.total_visible_tokens,0) total_visible_tokens,
+            COALESCE(s.prompts,0) outbound_messages,COALESCE(s.turns-s.prompts,0) inbound_messages,
+            COALESCE(s.turns,0) total_messages,
             s.calendar_span_days,s.active_days,s.session_count,s.estimated_active_seconds,s.longest_gap_seconds,
             (SELECT json_group_array(json_object('id',q.id,'name',q.name,'color',q.color)) FROM
               (SELECT t.id,t.name,t.color,SUM(mt.weight) w FROM message_topics mt JOIN messages mm ON mm.id=mt.message_id
@@ -238,7 +260,7 @@ def conversation_rankings(db_path, sort="total_visible_tokens", limit=50, offset
             FROM conversations c JOIN accounts a ON a.id=c.account_id LEFT JOIN conversation_stats s ON s.conversation_id=c.id
             WHERE (c.title LIKE ? OR EXISTS (
                 SELECT 1 FROM messages sm
-                WHERE sm.conversation_id=c.id AND sm.visible_text LIKE ?
+                WHERE sm.conversation_id=c.id AND sm.is_active_branch=1 AND sm.visible_text LIKE ?
             )) {where} {topic_filter} ORDER BY {order} DESC,c.updated_at DESC LIMIT ? OFFSET ?""",
             [f"%{search}%", f"%{search}%", *values, topic_id, topic_id, topic_id, max(1, min(limit, 5000)), max(0, offset)]
         ).fetchall()
@@ -265,14 +287,25 @@ def message_rankings(db_path, role, limit=20, provider=""):
 
 def conversation_detail(db_path, conversation_id):
     with connect(db_path) as conn:
-        overview = conn.execute("""SELECT c.id,c.provider,c.account_id,a.name account_name,c.title,c.created_at,c.updated_at,c.model_hint,
+        overview = conn.execute("""SELECT c.id,c.provider,c.account_id,a.name account_name,a.alias account_alias,
+        CASE WHEN a.alias IS NOT NULL AND trim(a.alias)<>'' THEN a.name || ' · ' || a.alias
+             WHEN (SELECT COUNT(*) FROM accounts ax WHERE ax.provider=a.provider AND ax.name=a.name)>1
+             THEN a.name || ' · …' || substr(COALESCE(a.external_user_id,a.id),-4)
+             ELSE a.name END account_display_name,
+        c.title,c.created_at,c.updated_at,c.model_hint,c.conversation_type,
         COALESCE(s.prompts,0) prompts,COALESCE(s.turns,0) turns,COALESCE(s.prompt_visible_tokens,0) prompt_visible_tokens,
         COALESCE(s.response_visible_tokens,0) response_visible_tokens,COALESCE(s.total_visible_tokens,0) total_visible_tokens,
+        COALESCE(s.prompts,0) outbound_messages,COALESCE(s.turns-s.prompts,0) inbound_messages,
+        COALESCE(s.turns,0) total_messages,
         s.calendar_span_days,s.active_days,s.session_count,s.estimated_active_seconds,s.longest_gap_seconds
         FROM conversations c JOIN accounts a ON a.id=c.account_id LEFT JOIN conversation_stats s ON s.conversation_id=c.id WHERE c.id=?""", (conversation_id,)).fetchone()
         if not overview:
             return None
-        messages = conn.execute("SELECT id,role,created_at,model,content_type,visible_text,visible_tokens,sequence_index,has_attachment,analyzable FROM messages WHERE conversation_id=? AND is_active_branch=1 ORDER BY sequence_index", (conversation_id,)).fetchall()
+        messages = conn.execute("""SELECT m.id,m.role,m.direction,m.sender_external_id,m.sender_display_name,m.raw_type,
+        m.created_at,m.model,m.content_type,m.visible_text,m.visible_tokens,m.sequence_index,m.has_attachment,m.analyzable
+        FROM messages m JOIN conversations c ON c.id=m.conversation_id
+        WHERE m.conversation_id=? AND m.is_active_branch=1
+        ORDER BY CASE WHEN c.provider='wechat' THEN m.created_at ELSE '' END,m.sequence_index,m.id""", (conversation_id,)).fetchall()
         topics = conn.execute("SELECT t.id,t.name,t.color,p.name parent_name,SUM(mt.weight) prompt_share FROM message_topics mt JOIN topics t ON t.id=mt.topic_id LEFT JOIN topics p ON p.id=t.parent_id JOIN messages m ON m.id=mt.message_id WHERE m.conversation_id=? GROUP BY t.id ORDER BY prompt_share DESC", (conversation_id,)).fetchall()
     return {**dict(overview), "messages": [dict(row) for row in messages], "topics": [dict(row) for row in topics]}
 
@@ -280,7 +313,12 @@ def conversation_detail(db_path, conversation_id):
 def day_conversations(db_path, day, provider="", account_id=""):
     where, values = _scope(provider, account_id)
     with connect(db_path) as conn:
-        rows = conn.execute(f"""SELECT c.id,c.provider,c.account_id,a.name account_name,c.title,d.prompts,d.prompt_visible_tokens,
+        rows = conn.execute(f"""SELECT c.id,c.provider,c.account_id,a.name account_name,a.alias account_alias,
+        CASE WHEN a.alias IS NOT NULL AND trim(a.alias)<>'' THEN a.name || ' · ' || a.alias
+             WHEN (SELECT COUNT(*) FROM accounts ax WHERE ax.provider=a.provider AND ax.name=a.name)>1
+             THEN a.name || ' · …' || substr(COALESCE(a.external_user_id,a.id),-4)
+             ELSE a.name END account_display_name,c.title,c.conversation_type,
+        d.prompts,d.turns,d.prompts outbound_messages,(d.turns-d.prompts) inbound_messages,d.turns total_messages,d.prompt_visible_tokens,
         d.response_visible_tokens,d.total_visible_tokens,d.first_activity,d.last_activity,
         (SELECT t.name FROM message_topics mt JOIN messages m ON m.id=mt.message_id JOIN topics t0 ON t0.id=mt.topic_id
          JOIN topics t ON t.id=COALESCE(t0.parent_id,t0.id) WHERE m.conversation_id=c.id GROUP BY t.id ORDER BY SUM(mt.weight) DESC LIMIT 1) dominant_topic,
@@ -297,4 +335,16 @@ def lifecycle(db_path, provider="", account_id=""):
 
 def records(db_path, timezone_name, provider=""):
     days = daily_series(db_path, timezone_name, provider)
-    return {"busiest_day_by_prompts": max(days, key=lambda row: row["prompts"], default=None), "busiest_day_by_tokens": max(days, key=lambda row: row["total_visible_tokens"], default=None), "largest_user_prompts": message_rankings(db_path, "user", 5, provider), "largest_assistant_responses": message_rankings(db_path, "assistant", 5, provider)}
+    conversations = conversation_rankings(db_path, "total_messages", 5000, provider=provider)
+    return {
+        "busiest_day_by_prompts": max(days, key=lambda row: row["prompts"], default=None),
+        "busiest_day_by_tokens": max(days, key=lambda row: row["total_visible_tokens"], default=None),
+        "busiest_day_by_messages": max(days, key=lambda row: row["total_messages"], default=None),
+        "most_messages": max(conversations, key=lambda row: row["total_messages"], default=None),
+        "most_outbound": max(conversations, key=lambda row: row["outbound_messages"], default=None),
+        "most_inbound": max(conversations, key=lambda row: row["inbound_messages"], default=None),
+        "most_active_days": max(conversations, key=lambda row: row.get("active_days") or 0, default=None),
+        "longest_lifecycle": max(conversations, key=lambda row: row.get("calendar_span_days") or 0, default=None),
+        "largest_user_prompts": message_rankings(db_path, "user", 5, provider),
+        "largest_assistant_responses": message_rankings(db_path, "assistant", 5, provider),
+    }

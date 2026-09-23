@@ -2,7 +2,7 @@
 
 **History is Aistory**
 
-一个本地优先的 ChatGPT / Gemini 对话同步、归档与活动分析工具。它把对话保存到本机 SQLite，提供中文 Web 仪表盘，并支持多平台多账号串行同步、ChatGPT 官方导出导入、可见 Token 估算和可选的主题分类。
+一个本地优先的个人数字历史平台。它把 ChatGPT、Gemini 和 WeChat 对话统一保存到本机 SQLite，提供中文 Web 仪表盘，并支持多平台多账号串行同步、ChatGPT 官方导出导入、可见 Token 估算和可选的主题分类。
 
 > 本项目使用 ChatGPT Web 的非公开接口。上游接口可能随时变化；请控制请求频率，仅同步你有权访问的账号和数据。
 
@@ -11,6 +11,7 @@
 - 增量同步 ChatGPT 对话，正常模式遇到首个未变化对话后停止继续翻页。
 - 多账号独立登录、独立原始数据目录，按照配置顺序串行同步。
 - Gemini 普通与置顶会话完整游标分页、保守增量读取和逐会话失败恢复。
+- WeChat 4.x 私聊与群聊只读同步，按 shard 保存 `sort_seq + local_id` 增量 cursor，并保留真实群成员显示名。
 - 导入 ChatGPT 官方导出 ZIP、`conversations.json`、单个 `conversation.json` 或对话目录。
 - 正确选择当前活动分支，排除放弃的编辑/重新生成分支。
 - 统计提示数、对话数、活跃天数以及输入、输出、总可见 Token。
@@ -73,6 +74,9 @@ python -m playwright install chromium
 # 需要 Gemini 同步时再安装可选依赖
 python -m pip install ".[gemini]"
 
+# 需要 WeChat 同步时再安装只读数据库依赖
+python -m pip install ".[wechat]"
+
 cd frontend
 npm install
 npm run build
@@ -126,6 +130,12 @@ cp config.example.json config.local.json
     "recent_refetch_count": 30,
     "retry_delays_seconds": [1, 3, 10]
   },
+  "wechat": {
+    "enabled": true,
+    "sync_private": true,
+    "sync_groups": true,
+    "sync_official_accounts": false
+  },
   "analytics": {
     "session_gap_minutes": 30,
     "single_prompt_minutes": 5,
@@ -137,6 +147,14 @@ cp config.example.json config.local.json
       "name": "个人账号",
       "provider": "chatgpt",
       "browser_profile": "browser_profile",
+      "enabled": true
+    },
+    {
+      "id": "wechat_main",
+      "name": "Lau",
+      "alias": "主号",
+      "provider": "wechat",
+      "wechat_data_dir": "D:/wechat/account-main",
       "enabled": true
     }
   ],
@@ -164,6 +182,7 @@ cp config.example.json config.local.json
 - `stop_on_first_unchanged` 开启时，普通同步会保留远端更新时间倒序顺序：索引阶段遇到首个元数据未变化的对话后停止翻页；若索引时间戳误报为更新，详情抓取在内容哈希首次判定为 `unchanged` 后也会跳过该索引流中更旧的候选。主列表与每个项目列表独立判断，避免遗漏其他项目的新对话。
 - `--full-index` 会忽略提前停止规则，执行完整索引核对。
 - Gemini Cookie 可保存在这份本地 JSON 中；环境变量 `GEMINI_1PSID`、`GEMINI_1PSIDTS` 仅作为可选覆盖。
+- WeChat 的 `wechat_data_dir` 是账号级配置；同步首次读取并绑定 self wxid，之后路径若指向另一账号会拒绝同步。
 - 设置 API 会清空 Cookie 和 API 密钥字段后再返回，`config.local.json` 不得提交。
 - 生命周期默认以 30 分钟提示间隔划分会话段；修改时区或口径后会重建派生统计。
 - 修改数据库路径会创建或打开目标数据库，不会自动搬迁旧数据库。
@@ -237,6 +256,12 @@ Gemini 同步会完整分页读取普通与置顶会话并按 ID 去重。用户
 
 如果同步后仍显示 0 条，请先查看“同步”页的账号级错误：连接超时通常表示需要在“设置 → Gemini 读取”填写本机 HTTP 代理（例如 `http://127.0.0.1:7890`）；“unauthenticated / permission denied”表示 Cookie 已失效，需要从已登录的 Gemini 网页重新复制 `Secure-1PSID` 与 `Secure-1PSIDTS`。应用不会再把未认证响应误报为“成功同步 0 条”。
 
+## 配置与同步 WeChat
+
+先安装 `.[wechat]` 可选依赖，再在“设置 → 账号与 Provider”添加 `provider: "wechat"` 的账号、别名和本机数据库目录。保存只执行目录及账号身份验证，不会自动读取完整历史；随后在统一“同步”页选择账号即可全量或增量同步。
+
+WeChat reader 只打开现有数据库读取数据，不执行 `UPDATE`、`DELETE` 或 `ALTER`。私聊通过 `contact.db` 联系人与实际存在的 `Msg_<md5(wxid)>` 消息表交集发现，群聊继续使用 EasyInternship 已验证的正文前缀、XML、压缩字段、sender vote 和 filehelper 推断。公众号不在 V1 范围内。微信消息不会进入 Topics 分类；Usage Time 只把本人发送消息作为强活动事件，收到消息只作为上下文。
+
 ## 导入 ChatGPT 官方导出数据
 
 支持以下输入：
@@ -306,6 +331,7 @@ GMM 与 HMM 是两种并列的模型设定，不显示唯一“真值”。HMM �
 主要接口：
 
 - `GET /api/summary`：总览统计
+- `GET /api/providers`：Provider 能力清单
 - `GET /api/activity/{daily|weekly|monthly}`：活动时间序列
 - `GET /api/activity/{date}/conversations`：某日对话明细
 - `GET /api/lifecycle`：对话生命周期统计
